@@ -66,4 +66,17 @@ enum VoteType {
 
 ```
 
+## E2E Tests
 
+In order to run E2E tests:
+- run a local node of people chain
+- specify the node's address in the config
+- run the server
+- run the tests.
+
+## Running the server
+
+In order to start the server:
+- run a local node of people chain
+- specify the node's address in the config
+- run the server.
