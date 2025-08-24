@@ -1,12 +1,42 @@
 # Persons-only Votations
 
+## Left To Do
+- public and private polls,
+- make voting more private (ZK?) - so as not to reveal one's vote
+- README update,
+- cleanup - retain only what's necessary,
+- code simplification,
+- E2E tests (a set of recognized people on-chain necessary).
+
+## Quick Start
+
+### 1. Setup
+```bash
+cp .env.example .env
+```
+
+### 2. Configure People Chain Connection
+Edit `.env` file and **ensure you specify the chain port**:
+```env
+PEOPLE_CHAIN_HOST=127.0.0.1
+PEOPLE_CHAIN_PORT=9944  
+PEOPLE_CHAIN_PROTOCOL=ws
+```
+
+### 3. Run the Server
+```bash
+cargo run
+```
+
+The server will start on `http://127.0.0.1:3000` by default and automatically connect to the People Chain or fall back to mock mode for development.
+
 ## Project idea
 
 Platform enabling creation, follow-up and management of votations/polls.
 Participants verification done with personhood assurance mechanism defined in "_individuality_" project.
 To interact with _People_ chain where the _individuality_ pallets are located, subxt library is used.
 
-The whole project should have it's separate Bandersnatch Ring context prefix.
+The whole project should have its separate Bandersnatch Ring context prefix.
 Then each votation should have a separate Bandersnatch Ring context, 
 so e.g. a votation's context would be PERSONS_POLL_{{poll_id}} = PERSONS_POLL_123456
 This, in order to ensure a person can vote only once in a votation and that their vote is private.

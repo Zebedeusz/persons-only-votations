@@ -1,8 +1,8 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
 use crate::services::vote_service::{VoteService, VoteServiceError};
 use crate::storage::models::poll::{Poll, PollData};
-use crate::storage::models::vote::{Vote, VoteType, CastVoteRequest};
-use crate::storage::repositories::poll_repository::{Repository, PollRepositoryError};
+use crate::storage::models::vote::{CastVoteRequest, Vote, VoteType};
+use crate::storage::repositories::poll_repository::{PollRepositoryError, Repository};
 use crate::storage::repositories::vote_repository::{VoteRepository, VoteRepositoryError};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
@@ -29,7 +29,10 @@ impl MockVoteRepository {
         *self.create_vote_result.lock().unwrap() = result;
     }
 
-    pub fn set_get_vote_by_poll_and_voter_result(&self, result: Result<Option<Vote>, VoteRepositoryError>) {
+    pub fn set_get_vote_by_poll_and_voter_result(
+        &self,
+        result: Result<Option<Vote>, VoteRepositoryError>,
+    ) {
         *self.get_vote_by_poll_and_voter_result.lock().unwrap() = result;
     }
 
@@ -47,8 +50,24 @@ impl VoteRepository for MockVoteRepository {
         self.get_votes_by_poll_result.lock().unwrap().clone()
     }
 
-    fn get_vote_by_poll_and_voter(&self, _poll_id: u32, _voter_public_key: &str) -> Result<Option<Vote>, VoteRepositoryError> {
-        self.get_vote_by_poll_and_voter_result.lock().unwrap().clone()
+    fn get_vote_by_poll_and_voter(
+        &self,
+        _poll_id: u32,
+        _voter_public_key: &str,
+    ) -> Result<Option<Vote>, VoteRepositoryError> {
+        self.get_vote_by_poll_and_voter_result
+            .lock()
+            .unwrap()
+            .clone()
+    }
+
+    fn get_vote_by_poll_and_alias(
+        &self,
+        _poll_id: u32,
+        _voter_alias: &str,
+    ) -> Result<Option<Vote>, VoteRepositoryError> {
+        // Return None for tests - can be customized per test if needed
+        Ok(None)
     }
 
     fn count_votes_by_poll(&self, _poll_id: u32) -> Result<(u32, u32), VoteRepositoryError> {
@@ -87,6 +106,10 @@ impl Repository for MockPollRepository {
         Ok(vec![])
     }
 
+    fn get_all_public_polls(&self) -> Result<Vec<Poll>, PollRepositoryError> {
+        Ok(vec![])
+    }
+
     fn update_poll(&self, _poll: Poll) -> Result<(), PollRepositoryError> {
         self.update_poll_result.lock().unwrap().clone()
     }
@@ -116,7 +139,11 @@ impl MockChainClient {
 
 #[async_trait]
 impl ChainClient for MockChainClient {
-    async fn verify_personhood(&self, _public_key: &str, _signature: &str) -> Result<bool, ChainError> {
+    async fn verify_personhood(
+        &self,
+        _public_key: &str,
+        _signature: &str,
+    ) -> Result<bool, ChainError> {
         self.verify_personhood_result.lock().unwrap().clone()
     }
 
@@ -138,7 +165,8 @@ mod tests {
         let future_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as i64 + 3600; // 1 hour from now
+            .as_secs() as i64
+            + 3600; // 1 hour from now
 
         let poll_data = PollData {
             name: "Test Poll".to_string(),
@@ -151,7 +179,7 @@ mod tests {
             1,
             "creator_key".to_string(),
             poll_data,
-            "test_context".to_string(),
+            "0000000000000000000000000000000000000000000000000000000000000001".to_string(), // 32-byte context for poll ID 1
             0, // created_at doesn't matter for these tests
         )
     }
@@ -162,6 +190,7 @@ mod tests {
             voter_public_key: "voter_key".to_string(),
             vote_type: VoteType::Yay,
             voter_signature: "signature".to_string(),
+            ring_proof: "0123456789abcdef".to_string(),
         }
     }
 
@@ -224,7 +253,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            VoteServiceError::PollNotActive => {},
+            VoteServiceError::PollNotActive => {}
             _ => panic!("Expected PollNotActive error"),
         }
     }
@@ -245,7 +274,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            VoteServiceError::PollNotActive => {},
+            VoteServiceError::PollNotActive => {}
             _ => panic!("Expected PollNotActive error"),
         }
     }
@@ -258,9 +287,17 @@ mod tests {
 
         let active_poll = create_active_poll();
         mock_poll_repo.set_get_poll_result(Ok(Some(active_poll)));
-        
+
         // Simulate existing vote
-        let existing_vote = Vote::new(1, "voter_key".to_string(), VoteType::Yay, "sig".to_string(), 0);
+        let existing_vote = Vote::new(
+            1,
+            "voter_key".to_string(),
+            "alias_hex".to_string(),
+            VoteType::Yay,
+            "sig".to_string(),
+            "ring_proof_hex".to_string(),
+            0,
+        );
         mock_vote_repo.set_get_vote_by_poll_and_voter_result(Ok(Some(existing_vote)));
 
         let service = VoteService::new(mock_vote_repo, mock_poll_repo, mock_chain);
@@ -269,7 +306,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            VoteServiceError::DuplicateVote => {},
+            VoteServiceError::DuplicateVote => {}
             _ => panic!("Expected DuplicateVote error"),
         }
     }
@@ -293,7 +330,7 @@ mod tests {
         match result.unwrap_err() {
             VoteServiceError::AuthorizationFailed(msg) => {
                 assert_eq!(msg, "Voter personhood not verified");
-            },
+            }
             _ => panic!("Expected AuthorizationFailed error"),
         }
     }
@@ -318,7 +355,7 @@ mod tests {
         match result.unwrap_err() {
             VoteServiceError::AuthorizationFailed(msg) => {
                 assert_eq!(msg, "Invalid vote signature");
-            },
+            }
             _ => panic!("Expected AuthorizationFailed error"),
         }
     }
@@ -332,7 +369,9 @@ mod tests {
         let active_poll = create_active_poll();
         mock_poll_repo.set_get_poll_result(Ok(Some(active_poll)));
         mock_vote_repo.set_get_vote_by_poll_and_voter_result(Ok(None));
-        mock_chain.set_verify_personhood_result(Err(ChainError::ConnectionFailed("Network error".to_string())));
+        mock_chain.set_verify_personhood_result(Err(ChainError::ConnectionFailed(
+            "Network error".to_string(),
+        )));
 
         let service = VoteService::new(mock_vote_repo, mock_poll_repo, mock_chain);
         let request = create_valid_vote_request();
@@ -342,7 +381,7 @@ mod tests {
         match result.unwrap_err() {
             VoteServiceError::ChainError(ChainError::ConnectionFailed(msg)) => {
                 assert_eq!(msg, "Network error");
-            },
+            }
             _ => panic!("Expected ChainError::ConnectionFailed"),
         }
     }
@@ -366,7 +405,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            VoteServiceError::VoteRepositoryError(VoteRepositoryError::LockError) => {},
+            VoteServiceError::VoteRepositoryError(VoteRepositoryError::LockError) => {}
             _ => panic!("Expected VoteRepositoryError::LockError"),
         }
     }

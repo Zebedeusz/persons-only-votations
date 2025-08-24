@@ -1,8 +1,8 @@
-use subxt::Config;
 use scale_codec::{Decode, Encode};
 use scale_info::TypeInfo;
 use sp_core::{H256, sr25519};
 use sp_runtime::traits::BlakeTwo256;
+use subxt::Config;
 
 // Basic runtime types
 pub type AccountId = sp_runtime::AccountId32;
@@ -54,7 +54,8 @@ pub enum PeopleMultiCall {
     UnsetPersonalIdAccount,
 }
 
-pub type UncheckedExtrinsic = sp_runtime::generic::UncheckedExtrinsic<AccountId, RuntimeCall, Signature, ()>;
+pub type UncheckedExtrinsic =
+    sp_runtime::generic::UncheckedExtrinsic<AccountId, RuntimeCall, Signature, ()>;
 
 // Custom config for the runtime
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

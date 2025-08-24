@@ -1,5 +1,6 @@
 pub mod api;
+pub mod chain;
+pub mod config;
+pub mod crypto;
 pub mod services;
 pub mod storage;
-pub mod chain;
-pub mod crypto;

@@ -1,7 +1,9 @@
 use crate::chain::people_multi::{ChainClient, ChainError, PeopleMultiClient};
-use crate::crypto::contexts::{generate_poll_context, context_to_string};
-use crate::storage::models::poll::{Poll, PollData, CreatePollRequest};
-use crate::storage::repositories::poll_repository::{Repository, PollRepository, PollRepositoryError};
+use crate::crypto::contexts::{context_to_string, generate_poll_context};
+use crate::storage::models::poll::{CreatePollRequest, Poll, PollData};
+use crate::storage::repositories::poll_repository::{
+    PollRepository, PollRepositoryError, Repository,
+};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -41,7 +43,10 @@ impl PollService {
         }
     }
 
-    pub fn with_concrete_types(repository: Arc<PollRepository>, chain_client: Arc<PeopleMultiClient>) -> Self {
+    pub fn with_concrete_types(
+        repository: Arc<PollRepository>,
+        chain_client: Arc<PeopleMultiClient>,
+    ) -> Self {
         Self {
             repository,
             chain_client,
@@ -123,9 +128,15 @@ impl PollService {
         Ok(self.repository.get_polls_by_creator(creator_key)?)
     }
 
+    pub async fn get_all_public_polls(&self) -> Result<Vec<Poll>> {
+        Ok(self.repository.get_all_public_polls()?)
+    }
+
     fn validate_poll_data(&self, poll_data: &PollData) -> Result<()> {
         if poll_data.name.trim().is_empty() {
-            return Err(PollServiceError::InvalidData("Name cannot be empty".to_string()));
+            return Err(PollServiceError::InvalidData(
+                "Name cannot be empty".to_string(),
+            ));
         }
 
         if poll_data.name.len() > 200 {
@@ -133,7 +144,9 @@ impl PollService {
         }
 
         if poll_data.description.len() > 2000 {
-            return Err(PollServiceError::InvalidData("Description too long".to_string()));
+            return Err(PollServiceError::InvalidData(
+                "Description too long".to_string(),
+            ));
         }
 
         let current_time = SystemTime::now()
@@ -158,8 +171,9 @@ impl PollService {
     }
 
     fn create_signature_message(&self, request: &CreatePollRequest) -> Result<Vec<u8>> {
-        let message_data = serde_json::to_string(&request.poll_data)
-            .map_err(|e| PollServiceError::InvalidData(format!("JSON serialization failed: {}", e)))?;
+        let message_data = serde_json::to_string(&request.poll_data).map_err(|e| {
+            PollServiceError::InvalidData(format!("JSON serialization failed: {}", e))
+        })?;
         Ok(message_data.as_bytes().to_vec())
     }
 }

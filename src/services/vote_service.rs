@@ -1,7 +1,9 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
-use crate::storage::models::vote::{Vote, VoteType, CastVoteRequest, CastVoteResponse};
-use crate::storage::repositories::vote_repository::{VoteRepository, VoteRepositoryError};
+use crate::crypto::contexts::string_to_context;
+use crate::crypto::ring_proof::{RingProofError, validate_ring_proof};
+use crate::storage::models::vote::{CastVoteRequest, CastVoteResponse, Vote, VoteType};
 use crate::storage::repositories::poll_repository::Repository;
+use crate::storage::repositories::vote_repository::{VoteRepository, VoteRepositoryError};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -24,6 +26,8 @@ pub enum VoteServiceError {
     VoteRepositoryError(#[from] VoteRepositoryError),
     #[error("Poll repository error: {0}")]
     PollRepositoryError(#[from] crate::storage::repositories::poll_repository::PollRepositoryError),
+    #[error("Ring proof error: {0}")]
+    RingProofError(#[from] RingProofError),
     #[error("System time error")]
     SystemTimeError,
 }
@@ -65,7 +69,8 @@ impl VoteService {
             return Err(VoteServiceError::PollNotActive);
         }
 
-        // 2. Check for duplicate vote
+        // 2. Check for duplicate vote (we'll validate with alias after ring proof validation)
+        // For now, still check by public key - we'll update this after getting the alias
         if self
             .vote_repository
             .get_vote_by_poll_and_voter(request.poll_id, &request.voter_public_key)?
@@ -74,7 +79,7 @@ impl VoteService {
             return Err(VoteServiceError::DuplicateVote);
         }
 
-        // 3. Verify voter personhood using poll context
+        // 3. Verify voter personhood
         let person_verified = self
             .chain_client
             .verify_personhood(&request.voter_public_key, &request.voter_signature)
@@ -103,23 +108,36 @@ impl VoteService {
             ));
         }
 
-        // 5. Create and store vote
+        // 5. Validate ring inclusion proof
+        let context_bytes = string_to_context(&poll.context)
+            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid poll context: {}", e)))?;
+
+        // Get ring root from chain - we need this for ring proof validation
+        // For now, we'll use a placeholder approach - in production this should come from the chain
+        let ring_root = sp_core::sr25519::Public::from_raw([1u8; 32]); // TODO: Get from chain
+
+        let voter_alias =
+            validate_ring_proof(&request.ring_proof, &ring_root, &context_bytes, &message)?;
+
+        // 6. Create and store vote
         let vote = Vote::new(
             request.poll_id,
             request.voter_public_key,
+            voter_alias,
             request.vote_type.clone(),
             request.voter_signature,
+            request.ring_proof,
             current_time,
         );
 
         self.vote_repository.create_vote(vote)?;
 
-        // 6. Update poll vote counts
+        // 7. Update poll vote counts
         let (yay_count, nay_count) = self.vote_repository.count_votes_by_poll(request.poll_id)?;
         let mut updated_poll = poll;
         updated_poll.yay_votes = yay_count;
         updated_poll.nay_votes = nay_count;
-        
+
         self.poll_repository.update_poll(updated_poll)?;
 
         let vote_type_message = match request.vote_type {
@@ -151,16 +169,21 @@ impl VoteService {
         Ok(self.vote_repository.count_votes_by_poll(poll_id)?)
     }
 
-    fn create_vote_message(&self, request: &CastVoteRequest, poll_context: &str) -> Result<Vec<u8>> {
+    fn create_vote_message(
+        &self,
+        request: &CastVoteRequest,
+        poll_context: &str,
+    ) -> Result<Vec<u8>> {
         let vote_data = serde_json::json!({
             "poll_id": request.poll_id,
             "vote_type": request.vote_type,
             "context": poll_context
         });
-        
-        let message = serde_json::to_string(&vote_data)
-            .map_err(|e| VoteServiceError::InvalidData(format!("JSON serialization failed: {}", e)))?;
-        
+
+        let message = serde_json::to_string(&vote_data).map_err(|e| {
+            VoteServiceError::InvalidData(format!("JSON serialization failed: {}", e))
+        })?;
+
         Ok(message.as_bytes().to_vec())
     }
 }

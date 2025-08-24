@@ -1,7 +1,7 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
 use crate::services::poll_service::{PollService, PollServiceError};
 use crate::storage::models::poll::{CreatePollRequest, Poll, PollData};
-use crate::storage::repositories::poll_repository::{Repository, PollRepositoryError};
+use crate::storage::repositories::poll_repository::{PollRepositoryError, Repository};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,7 +30,11 @@ impl MockChainClient {
 
 #[async_trait]
 impl ChainClient for MockChainClient {
-    async fn verify_personhood(&self, _public_key: &str, _signature: &str) -> Result<bool, ChainError> {
+    async fn verify_personhood(
+        &self,
+        _public_key: &str,
+        _signature: &str,
+    ) -> Result<bool, ChainError> {
         self.verify_personhood_result.lock().unwrap().clone()
     }
 
@@ -83,6 +87,11 @@ impl Repository for MockRepository {
         self.get_polls_by_creator_result.lock().unwrap().clone()
     }
 
+    fn get_all_public_polls(&self) -> Result<Vec<Poll>, PollRepositoryError> {
+        // Return empty vec for tests - can be customized per test if needed
+        Ok(vec![])
+    }
+
     fn update_poll(&self, _poll: Poll) -> Result<(), PollRepositoryError> {
         self.update_poll_result.lock().unwrap().clone()
     }
@@ -96,7 +105,8 @@ mod tests {
         let future_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as i64 + 3600; // 1 hour from now
+            .as_secs() as i64
+            + 3600; // 1 hour from now
 
         PollData {
             name: "Test Poll".to_string(),
@@ -218,14 +228,17 @@ mod tests {
         let far_future = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as i64 + (31 * 24 * 60 * 60);
+            .as_secs() as i64
+            + (31 * 24 * 60 * 60);
         request.poll_data.ends_at = far_future;
 
         let result = service.create_poll(request).await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            PollServiceError::InvalidData(msg) => assert_eq!(msg, "Poll duration cannot exceed 30 days"),
+            PollServiceError::InvalidData(msg) => {
+                assert_eq!(msg, "Poll duration cannot exceed 30 days")
+            }
             _ => panic!("Expected InvalidData error"),
         }
     }
@@ -254,7 +267,9 @@ mod tests {
         let mock_repo = Arc::new(MockRepository::new());
         let mock_chain = Arc::new(MockChainClient::new());
 
-        mock_chain.set_validate_signature_result(Err(ChainError::ConnectionFailed("Network error".to_string())));
+        mock_chain.set_validate_signature_result(Err(ChainError::ConnectionFailed(
+            "Network error".to_string(),
+        )));
 
         let service = PollService::new(mock_repo, mock_chain);
 
@@ -296,7 +311,9 @@ mod tests {
         let mock_chain = Arc::new(MockChainClient::new());
 
         mock_chain.set_validate_signature_result(Ok(true));
-        mock_chain.set_verify_personhood_result(Err(ChainError::QueryFailed("Query timeout".to_string())));
+        mock_chain.set_verify_personhood_result(Err(ChainError::QueryFailed(
+            "Query timeout".to_string(),
+        )));
 
         let service = PollService::new(mock_repo, mock_chain);
 
@@ -328,7 +345,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            PollServiceError::RepositoryError(PollRepositoryError::LockError) => {},
+            PollServiceError::RepositoryError(PollRepositoryError::LockError) => {}
             _ => panic!("Expected RepositoryError::LockError"),
         }
     }
@@ -392,7 +409,8 @@ mod tests {
         let exactly_30_days = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as i64 + (30 * 24 * 60 * 60);
+            .as_secs() as i64
+            + (30 * 24 * 60 * 60);
         request.poll_data.ends_at = exactly_30_days;
 
         let result = service.create_poll(request).await;
