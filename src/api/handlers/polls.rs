@@ -102,7 +102,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_poll_invalid_json() {
         let repo = Arc::new(PollRepository::new());
-        let chain = Arc::new(PeopleMultiClient::new());
+        let chain = Arc::new(PeopleMultiClient::new_mock());
         let service = Arc::new(PollService::new(repo, chain));
         let handler = PollHandler::new(service);
 

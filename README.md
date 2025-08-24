@@ -5,10 +5,16 @@
 Platform enabling creation, follow-up and management of votations/polls.
 Participants verification done with personhood assurance mechanism defined in "_individuality_" project.
 To interact with _People_ chain where the _individuality_ pallets are located, subxt library is used.
+
 The whole project should have it's separate Bandersnatch Ring context prefix.
 Then each votation should have a separate Bandersnatch Ring context, 
 so e.g. a votation's context would be PERSONS_POLL_{{poll_id}} = PERSONS_POLL_123456
 This, in order to ensure a person can vote only once in a votation and that their vote is private.
+
+Technically, this is a typical backend application that only communicates 
+with the blockchain to verify user's personhood.
+Thus, in order to achieve data persistence with blockchain resilience, 
+at least the data layer should be handled by a polkadot-sdk pallet.
 
 ## API
 
