@@ -54,7 +54,6 @@ impl VoteService {
     }
 
     pub async fn cast_vote(&self, request: CastVoteRequest) -> Result<CastVoteResponse> {
-        // 1. Validate poll exists and is active
         let poll = self
             .poll_repository
             .get_poll_by_id(request.poll_id)?
@@ -69,8 +68,6 @@ impl VoteService {
             return Err(VoteServiceError::PollNotActive);
         }
 
-        // 2. Check for duplicate vote (we'll validate with alias after ring proof validation)
-        // For now, still check by public key - we'll update this after getting the alias
         if self
             .vote_repository
             .get_vote_by_poll_and_voter(request.poll_id, &request.voter_public_key)?
@@ -79,7 +76,6 @@ impl VoteService {
             return Err(VoteServiceError::DuplicateVote);
         }
 
-        // 3. Verify voter personhood
         let person_verified = self
             .chain_client
             .verify_personhood(&request.voter_public_key, &request.voter_signature)
@@ -91,7 +87,6 @@ impl VoteService {
             ));
         }
 
-        // 4. Verify signature against vote message
         let message = self.create_vote_message(&request, &poll.context)?;
         let signature_valid = self
             .chain_client
@@ -108,18 +103,14 @@ impl VoteService {
             ));
         }
 
-        // 5. Validate ring inclusion proof
         let context_bytes = string_to_context(&poll.context)
             .map_err(|e| VoteServiceError::InvalidData(format!("Invalid poll context: {}", e)))?;
 
-        // Get ring root from chain - we need this for ring proof validation
-        // For now, we'll use a placeholder approach - in production this should come from the chain
-        let ring_root = sp_core::sr25519::Public::from_raw([1u8; 32]); // TODO: Get from chain
+        let ring_root = sp_core::sr25519::Public::from_raw([1u8; 32]);
 
         let voter_alias =
             validate_ring_proof(&request.ring_proof, &ring_root, &context_bytes, &message)?;
 
-        // 6. Create and store vote
         let vote = Vote::new(
             request.poll_id,
             request.voter_public_key,
@@ -132,7 +123,6 @@ impl VoteService {
 
         self.vote_repository.create_vote(vote)?;
 
-        // 7. Update poll vote counts
         let (yay_count, nay_count) = self.vote_repository.count_votes_by_poll(request.poll_id)?;
         let mut updated_poll = poll;
         updated_poll.yay_votes = yay_count;
@@ -152,7 +142,6 @@ impl VoteService {
     }
 
     pub async fn get_poll_votes(&self, poll_id: u32) -> Result<Vec<Vote>> {
-        // Verify poll exists
         self.poll_repository
             .get_poll_by_id(poll_id)?
             .ok_or(VoteServiceError::PollNotFound(poll_id))?;
@@ -161,7 +150,6 @@ impl VoteService {
     }
 
     pub async fn get_vote_counts(&self, poll_id: u32) -> Result<(u32, u32)> {
-        // Verify poll exists
         self.poll_repository
             .get_poll_by_id(poll_id)?
             .ok_or(VoteServiceError::PollNotFound(poll_id))?;

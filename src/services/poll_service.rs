@@ -1,8 +1,8 @@
-use crate::chain::people_multi::{ChainClient, ChainError, PeopleMultiClient};
+use crate::chain::people_multi::{ChainClient, ChainError};
 use crate::crypto::contexts::{context_to_string, generate_poll_context};
 use crate::storage::models::poll::{CreatePollRequest, Poll, PollData};
 use crate::storage::repositories::poll_repository::{
-    PollRepository, PollRepositoryError, Repository,
+    PollRepositoryError, Repository,
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -43,21 +43,10 @@ impl PollService {
         }
     }
 
-    pub fn with_concrete_types(
-        repository: Arc<PollRepository>,
-        chain_client: Arc<PeopleMultiClient>,
-    ) -> Self {
-        Self {
-            repository,
-            chain_client,
-        }
-    }
 
     pub async fn create_poll(&self, request: CreatePollRequest) -> Result<CreatePollResponse> {
-        // 1. Validate request data
         self.validate_poll_data(&request.poll_data)?;
 
-        // 2. Verify signature
         let message = self.create_signature_message(&request)?;
         let signature_valid = self
             .chain_client
@@ -74,7 +63,6 @@ impl PollService {
             ));
         }
 
-        // 3. Verify personhood
         let person_verified = self
             .chain_client
             .verify_personhood(&request.creator_public_key, &request.creator_signature)
@@ -86,25 +74,21 @@ impl PollService {
             ));
         }
 
-        // 4. Generate context (we need poll ID first, so we'll use a temporary approach)
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| PollServiceError::SystemTimeError)?
             .as_secs() as i64;
 
-        // 5. Create poll with temporary ID 0 (repository will assign real ID)
         let poll = Poll::new(
             0,
             request.creator_public_key,
             request.poll_data,
-            String::new(), // Will be set after we get the ID
+            String::new(),
             current_time,
         );
 
-        // 6. Save to repository to get real ID
         let poll_id = self.repository.create_poll(poll.clone())?;
 
-        // 7. Generate and update context
         let context_bytes = generate_poll_context(poll_id);
         let context_string = context_to_string(&context_bytes);
 

@@ -31,14 +31,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting Persons-only Votations Server");
     info!("Server configuration: {:#?}", config);
 
-    // Initialize chain client
     let chain_client = initialize_chain_client(&config).await?;
 
-    // Initialize repositories (using in-memory for now, could be database-backed)
     let poll_repository: Arc<dyn Repository> = Arc::new(PollRepository::new());
     let vote_repository: Arc<dyn VoteRepository> = Arc::new(InMemoryVoteRepository::new());
 
-    // Initialize services
     let poll_service = Arc::new(PollService::new(
         poll_repository.clone(),
         chain_client.clone(),
@@ -49,20 +46,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chain_client.clone(),
     ));
 
-    // Create application state
     let app_state = AppState {
         poll_service,
         vote_service,
     };
 
-    // Create router with middleware
     let app = create_router(app_state).layer(
         ServiceBuilder::new()
-            .layer(CorsLayer::permissive()) // For development
+            .layer(CorsLayer::permissive())
             .into_inner(),
     );
-
-    // Server start
     let listener = TcpListener::bind(&config.server_address()).await?;
     info!("Server listening on {}", config.server_address());
     info!(
@@ -83,10 +76,8 @@ async fn initialize_chain_client(
 
     info!("Connecting to People Chain at: {}", chain_endpoint);
 
-    // Try to connect to the actual chain, fallback to mock for development
     match PeopleMultiClient::new_with_retry(&chain_endpoint, 3).await {
         Ok(client) => {
-            // Test the connection
             match client.health_check().await {
                 Ok(true) => {
                     info!("Successfully connected to People Chain");
