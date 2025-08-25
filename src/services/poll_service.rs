@@ -112,8 +112,8 @@ impl PollService {
         Ok(self.repository.get_polls_by_creator(creator_key)?)
     }
 
-    pub async fn get_all_public_polls(&self) -> Result<Vec<Poll>> {
-        Ok(self.repository.get_all_public_polls()?)
+    pub async fn get_all_polls(&self) -> Result<Vec<Poll>> {
+        Ok(self.repository.get_all_polls()?)
     }
 
     fn validate_poll_data(&self, poll_data: &PollData) -> Result<()> {

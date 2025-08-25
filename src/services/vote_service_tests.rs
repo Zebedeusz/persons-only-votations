@@ -106,7 +106,7 @@ impl Repository for MockPollRepository {
         Ok(vec![])
     }
 
-    fn get_all_public_polls(&self) -> Result<Vec<Poll>, PollRepositoryError> {
+    fn get_all_polls(&self) -> Result<Vec<Poll>, PollRepositoryError> {
         Ok(vec![])
     }
 
@@ -171,7 +171,6 @@ mod tests {
         let poll_data = PollData {
             name: "Test Poll".to_string(),
             description: "Test Description".to_string(),
-            is_public: true,
             ends_at: future_time,
         };
 

@@ -81,8 +81,8 @@ impl PollHandler {
         Ok(json_response)
     }
 
-    pub async fn get_all_public_polls(&self) -> Result<String, ApiError> {
-        let polls = self.poll_service.get_all_public_polls().await?;
+    pub async fn get_all_polls(&self) -> Result<String, ApiError> {
+        let polls = self.poll_service.get_all_polls().await?;
 
         let json_response = serde_json::to_string(&polls)
             .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {}", e)))?;

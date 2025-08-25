@@ -75,7 +75,7 @@ async fn cast_vote(
 
 async fn get_all_polls(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     let handler = PollHandler::new(state.poll_service.clone());
-    let response = handler.get_all_public_polls().await?;
+    let response = handler.get_all_polls().await?;
     Ok(response)
 }
 

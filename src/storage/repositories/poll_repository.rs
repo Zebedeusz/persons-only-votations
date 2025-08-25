@@ -17,7 +17,7 @@ pub trait Repository: Send + Sync {
     fn create_poll(&self, poll: Poll) -> Result<u32>;
     fn get_poll_by_id(&self, id: u32) -> Result<Option<Poll>>;
     fn get_polls_by_creator(&self, creator_key: &str) -> Result<Vec<Poll>>;
-    fn get_all_public_polls(&self) -> Result<Vec<Poll>>;
+    fn get_all_polls(&self) -> Result<Vec<Poll>>;
     fn update_poll(&self, poll: Poll) -> Result<()>;
 }
 
@@ -74,14 +74,13 @@ impl PollRepository {
         Ok(polls)
     }
 
-    pub fn get_all_public_polls(&self) -> Result<Vec<Poll>> {
+    pub fn get_all_polls(&self) -> Result<Vec<Poll>> {
         let storage = self
             .storage
             .lock()
             .map_err(|_| PollRepositoryError::LockError)?;
         let polls = storage
             .values()
-            .filter(|poll| poll.is_public)
             .cloned()
             .collect();
         Ok(polls)
@@ -114,8 +113,8 @@ impl Repository for PollRepository {
         self.get_polls_by_creator(creator_key)
     }
 
-    fn get_all_public_polls(&self) -> Result<Vec<Poll>> {
-        self.get_all_public_polls()
+    fn get_all_polls(&self) -> Result<Vec<Poll>> {
+        self.get_all_polls()
     }
 
     fn update_poll(&self, poll: Poll) -> Result<()> {

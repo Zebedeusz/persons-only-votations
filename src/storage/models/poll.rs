@@ -6,7 +6,6 @@ pub struct Poll {
     pub creator_public_key: String,
     pub name: String,
     pub description: String,
-    pub is_public: bool,
     pub yay_votes: u32,
     pub nay_votes: u32,
     pub created_at: i64,
@@ -19,7 +18,6 @@ pub struct Poll {
 pub struct PollData {
     pub name: String,
     pub description: String,
-    pub is_public: bool,
     pub ends_at: i64,
 }
 
@@ -43,7 +41,6 @@ impl Poll {
             creator_public_key,
             name: poll_data.name,
             description: poll_data.description,
-            is_public: poll_data.is_public,
             yay_votes: 0,
             nay_votes: 0,
             created_at,

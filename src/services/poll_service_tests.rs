@@ -87,7 +87,7 @@ impl Repository for MockRepository {
         self.get_polls_by_creator_result.lock().unwrap().clone()
     }
 
-    fn get_all_public_polls(&self) -> Result<Vec<Poll>, PollRepositoryError> {
+    fn get_all_polls(&self) -> Result<Vec<Poll>, PollRepositoryError> {
         // Return empty vec for tests - can be customized per test if needed
         Ok(vec![])
     }
@@ -111,7 +111,6 @@ mod tests {
         PollData {
             name: "Test Poll".to_string(),
             description: "Test Description".to_string(),
-            is_public: true,
             ends_at: future_time,
         }
     }
