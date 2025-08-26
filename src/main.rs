@@ -72,8 +72,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn initialize_chain_client(
     config: &Config,
 ) -> Result<Arc<dyn ChainClient>, Box<dyn std::error::Error>> {
-    let chain_endpoint = config.people_chain_endpoint();
+    if config.mock_mode {
+        info!("Mock mode enabled - using mock chain client");
+        return Ok(Arc::new(PeopleMultiClient::new_mock()) as Arc<dyn ChainClient>);
+    }
 
+    let chain_endpoint = config.people_chain_endpoint();
     info!("Connecting to People Chain at: {}", chain_endpoint);
 
     match PeopleMultiClient::new_with_retry(&chain_endpoint, 3).await {
@@ -85,20 +89,17 @@ async fn initialize_chain_client(
                 }
                 Ok(false) => {
                     error!("People Chain connection failed health check");
-                    info!("Falling back to mock chain client for development");
-                    Ok(Arc::new(PeopleMultiClient::new_mock()) as Arc<dyn ChainClient>)
+                    Err("People Chain connection failed health check".into())
                 }
                 Err(e) => {
                     error!("People Chain health check error: {}", e);
-                    info!("Falling back to mock chain client for development");
-                    Ok(Arc::new(PeopleMultiClient::new_mock()) as Arc<dyn ChainClient>)
+                    Err(format!("People Chain health check error: {}", e).into())
                 }
             }
         }
         Err(e) => {
             error!("Failed to connect to People Chain: {}", e);
-            info!("Falling back to mock chain client for development");
-            Ok(Arc::new(PeopleMultiClient::new_mock()) as Arc<dyn ChainClient>)
+            Err(e.into())
         }
     }
 }

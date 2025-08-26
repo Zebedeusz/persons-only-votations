@@ -21,15 +21,11 @@ pub struct Config {
     #[arg(long, env = "PEOPLE_CHAIN_PROTOCOL", default_value = "ws")]
     pub people_chain_protocol: String,
 
-    #[arg(
-        long,
-        env = "DATABASE_URL",
-        default_value = "persons_only_votations.db"
-    )]
-    pub database_url: String,
-
     #[arg(long, env = "LOG_LEVEL", default_value = "info")]
     pub log_level: String,
+
+    #[arg(long, env = "MOCK_MODE", default_value = "false")]
+    pub mock_mode: bool,
 }
 
 impl Config {
@@ -64,8 +60,8 @@ impl Default for Config {
             people_chain_host: "127.0.0.1".to_string(),
             people_chain_port: 9944, // Default Substrate WebSocket port
             people_chain_protocol: "ws".to_string(),
-            database_url: "persons_only_votations.db".to_string(),
             log_level: "info".to_string(),
+            mock_mode: false,
         }
     }
 }
@@ -107,5 +103,7 @@ mod tests {
         assert_eq!(config.people_chain_port, 9944);
         assert_eq!(config.people_chain_protocol, "ws");
         assert_eq!(config.people_chain_endpoint(), "ws://127.0.0.1:9944");
+        assert_eq!(config.log_level, "info");
+        assert_eq!(config.mock_mode, false);
     }
 }
