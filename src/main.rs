@@ -81,22 +81,20 @@ async fn initialize_chain_client(
     info!("Connecting to People Chain at: {}", chain_endpoint);
 
     match PeopleMultiClient::new_with_retry(&chain_endpoint, 3).await {
-        Ok(client) => {
-            match client.health_check().await {
-                Ok(true) => {
-                    info!("Successfully connected to People Chain");
-                    Ok(Arc::new(client) as Arc<dyn ChainClient>)
-                }
-                Ok(false) => {
-                    error!("People Chain connection failed health check");
-                    Err("People Chain connection failed health check".into())
-                }
-                Err(e) => {
-                    error!("People Chain health check error: {}", e);
-                    Err(format!("People Chain health check error: {}", e).into())
-                }
+        Ok(client) => match client.health_check().await {
+            Ok(true) => {
+                info!("Successfully connected to People Chain");
+                Ok(Arc::new(client) as Arc<dyn ChainClient>)
             }
-        }
+            Ok(false) => {
+                error!("People Chain connection failed health check");
+                Err("People Chain connection failed health check".into())
+            }
+            Err(e) => {
+                error!("People Chain health check error: {}", e);
+                Err(format!("People Chain health check error: {}", e).into())
+            }
+        },
         Err(e) => {
             error!("Failed to connect to People Chain: {}", e);
             Err(e.into())

@@ -1,6 +1,6 @@
 use crate::e2e::config::E2eConfig;
-use subxt::{OnlineClient, PolkadotConfig};
 use std::time::Duration;
+use subxt::{OnlineClient, PolkadotConfig};
 use tokio::time::{sleep, timeout};
 
 pub struct E2eTestSetup {
@@ -12,14 +12,14 @@ pub struct E2eTestSetup {
 impl E2eTestSetup {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = E2eConfig::from_env();
-        
+
         let people_client = if config.mock_mode {
             tracing::info!("Mock mode enabled - skipping people chain connection");
             None
         } else {
             Some(Self::connect_to_people_chain(&config).await?)
         };
-        
+
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.test_timeout_seconds))
             .build()?;
@@ -35,14 +35,19 @@ impl E2eTestSetup {
         config: &E2eConfig,
     ) -> Result<OnlineClient<PolkadotConfig>, Box<dyn std::error::Error + Send + Sync>> {
         let mut retries = 0;
-        
+
         loop {
             match timeout(
                 Duration::from_secs(10),
                 OnlineClient::<PolkadotConfig>::from_url(&config.people_chain_endpoint),
-            ).await {
+            )
+            .await
+            {
                 Ok(Ok(client)) => {
-                    tracing::info!("Connected to people chain at {}", config.people_chain_endpoint);
+                    tracing::info!(
+                        "Connected to people chain at {}",
+                        config.people_chain_endpoint
+                    );
                     return Ok(client);
                 }
                 Ok(Err(e)) => {
@@ -50,13 +55,15 @@ impl E2eTestSetup {
                     if retries > config.chain_connection_retries {
                         return Err(format!(
                             "Failed to connect to people chain after {} retries: {}",
-                            config.chain_connection_retries,
-                            config.people_chain_endpoint
-                        ).into());
+                            config.chain_connection_retries, config.people_chain_endpoint
+                        )
+                        .into());
                     }
                     tracing::warn!(
                         "Failed to connect to people chain (attempt {}/{}): {:?}",
-                        retries, config.chain_connection_retries, e
+                        retries,
+                        config.chain_connection_retries,
+                        e
                     );
                 }
                 Err(timeout_err) => {
@@ -65,11 +72,14 @@ impl E2eTestSetup {
                         return Err(format!(
                             "Failed to connect to people chain after {} retries: timeout",
                             config.chain_connection_retries
-                        ).into());
+                        )
+                        .into());
                     }
                     tracing::warn!(
                         "Failed to connect to people chain (attempt {}/{}): timeout - {:?}",
-                        retries, config.chain_connection_retries, timeout_err
+                        retries,
+                        config.chain_connection_retries,
+                        timeout_err
                     );
                     sleep(Duration::from_secs(2)).await;
                 }
@@ -80,7 +90,7 @@ impl E2eTestSetup {
     pub async fn wait_for_server(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let health_endpoint = format!("{}/health", self.config.server_base_url);
         let mut retries = 0;
-        
+
         loop {
             match self.http_client.get(&health_endpoint).send().await {
                 Ok(response) if response.status().is_success() => {

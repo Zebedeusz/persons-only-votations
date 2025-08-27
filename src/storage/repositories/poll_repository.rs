@@ -79,10 +79,7 @@ impl PollRepository {
             .storage
             .lock()
             .map_err(|_| PollRepositoryError::LockError)?;
-        let polls = storage
-            .values()
-            .cloned()
-            .collect();
+        let polls = storage.values().cloned().collect();
         Ok(polls)
     }
 

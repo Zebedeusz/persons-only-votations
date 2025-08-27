@@ -1,9 +1,7 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
 use crate::crypto::contexts::{context_to_string, generate_poll_context};
 use crate::storage::models::poll::{CreatePollRequest, Poll, PollData};
-use crate::storage::repositories::poll_repository::{
-    PollRepositoryError, Repository,
-};
+use crate::storage::repositories::poll_repository::{PollRepositoryError, Repository};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -42,7 +40,6 @@ impl PollService {
             chain_client,
         }
     }
-
 
     pub async fn create_poll(&self, request: CreatePollRequest) -> Result<CreatePollResponse> {
         self.validate_poll_data(&request.poll_data)?;

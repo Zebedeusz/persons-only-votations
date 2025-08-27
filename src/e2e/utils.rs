@@ -1,6 +1,8 @@
+use super::crypto_helpers::{
+    TestKeyPair, create_poll_signature_message, create_vote_signature_message,
+};
 use serde_json::Value;
 use std::collections::HashMap;
-use super::crypto_helpers::{TestKeyPair, create_poll_signature_message, create_vote_signature_message};
 
 pub struct TestPoll {
     pub title: String,
@@ -26,11 +28,12 @@ impl TestPoll {
         let ends_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() as i64 + 3600;
+            .as_secs() as i64
+            + 3600;
 
         // Create the signature message (JSON of poll_data)
         let message = create_poll_signature_message(&self.title, &self.description, ends_at);
-        
+
         // Sign the message
         let signature = creator_keypair.sign_message(&message);
 
@@ -124,18 +127,22 @@ impl TestHelpers {
         voter_keypair: &TestKeyPair,
     ) -> HashMap<&'static str, Value> {
         // Create signature message
-        let message = create_vote_signature_message(poll_id, &voter_keypair.public_key_hex, vote_type);
-        
+        let message =
+            create_vote_signature_message(poll_id, &voter_keypair.public_key_hex, vote_type);
+
         // Sign the message
         let signature = voter_keypair.sign_message(&message);
 
         let mut vote_data = HashMap::new();
         vote_data.insert("poll_id", Value::Number(poll_id.into()));
-        vote_data.insert("voter_public_key", Value::String(voter_keypair.public_key_hex.clone()));
+        vote_data.insert(
+            "voter_public_key",
+            Value::String(voter_keypair.public_key_hex.clone()),
+        );
         vote_data.insert("vote_type", Value::String(vote_type.to_string()));
         vote_data.insert("voter_signature", Value::String(signature));
         vote_data.insert("ring_proof", Value::String("0123456789abcdef".to_string()));
-        
+
         vote_data
     }
 }

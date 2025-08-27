@@ -1,4 +1,4 @@
-use sp_core::{sr25519, Pair};
+use sp_core::{Pair, sr25519};
 
 pub struct TestKeyPair {
     pub public_key_hex: String,
@@ -9,7 +9,7 @@ impl TestKeyPair {
     pub fn generate() -> Self {
         let pair = sr25519::Pair::generate().0;
         let public_key_hex = hex::encode(pair.public().0);
-        
+
         Self {
             public_key_hex,
             pair,
@@ -34,7 +34,7 @@ pub fn create_poll_signature_message(
         "description": poll_description,
         "ends_at": ends_at
     });
-    
+
     serde_json::to_string(&poll_data)
         .unwrap()
         .as_bytes()
