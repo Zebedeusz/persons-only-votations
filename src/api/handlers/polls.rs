@@ -44,9 +44,13 @@ impl PollHandler {
     }
 
     pub async fn create_poll(&self, json_body: &str) -> Result<String, ApiError> {
+        tracing::debug!("Poll creation request received: {}", json_body);
+        
         // Parse request
         let request: CreatePollRequest = serde_json::from_str(json_body)
             .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?;
+
+        tracing::debug!("Parsed request - Member: {}", request.creator_member_hex);
 
         // Call service
         let response = self.poll_service.create_poll(request).await?;

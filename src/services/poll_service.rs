@@ -42,19 +42,25 @@ impl PollService {
     }
 
     pub async fn create_poll(&self, request: CreatePollRequest) -> Result<CreatePollResponse> {
+        tracing::debug!("Starting poll creation validation");
         self.validate_poll_data(&request.poll_data)?;
 
         let message = self.create_signature_message(&request)?;
+        tracing::debug!("Created signature message: {}", String::from_utf8_lossy(&message));
+        
         let signature_valid = self
             .chain_client
             .validate_signature(
-                &request.creator_public_key,
+                &request.creator_member_hex,
                 &request.creator_signature,
                 &message,
             )
             .await?;
 
+        tracing::debug!("Signature validation result: {}", signature_valid);
+
         if !signature_valid {
+            tracing::error!("Signature validation failed for member: {}", request.creator_member_hex);
             return Err(PollServiceError::AuthorizationFailed(
                 "Invalid signature".to_string(),
             ));
@@ -62,10 +68,13 @@ impl PollService {
 
         let person_verified = self
             .chain_client
-            .verify_personhood(&request.creator_public_key, &request.creator_signature)
+            .verify_personhood(&request.creator_member_hex, &request.creator_signature)
             .await?;
 
+        tracing::debug!("Personhood verification result: {}", person_verified);
+
         if !person_verified {
+            tracing::error!("Personhood verification failed for member: {}", request.creator_member_hex);
             return Err(PollServiceError::AuthorizationFailed(
                 "Person not verified".to_string(),
             ));
@@ -78,7 +87,7 @@ impl PollService {
 
         let poll = Poll::new(
             0,
-            request.creator_public_key,
+            request.creator_member_hex,
             request.poll_data,
             String::new(),
             current_time,

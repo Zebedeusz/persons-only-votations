@@ -117,7 +117,7 @@ mod tests {
 
     fn create_valid_request() -> CreatePollRequest {
         CreatePollRequest {
-            creator_public_key: "xoxo".to_string(),
+            creator_member_hex: "xoxo".to_string(),
             creator_signature: "abcd1234".to_string(),
             poll_data: create_valid_poll_data(),
         }

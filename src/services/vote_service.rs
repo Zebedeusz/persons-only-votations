@@ -70,7 +70,7 @@ impl VoteService {
 
         if self
             .vote_repository
-            .get_vote_by_poll_and_voter(request.poll_id, &request.voter_public_key)?
+            .get_vote_by_poll_and_voter(request.poll_id, &request.voter_member_hex)?
             .is_some()
         {
             return Err(VoteServiceError::DuplicateVote);
@@ -78,7 +78,7 @@ impl VoteService {
 
         let person_verified = self
             .chain_client
-            .verify_personhood(&request.voter_public_key, &request.voter_signature)
+            .verify_personhood(&request.voter_member_hex, &request.voter_signature)
             .await?;
 
         if !person_verified {
@@ -91,7 +91,7 @@ impl VoteService {
         let signature_valid = self
             .chain_client
             .validate_signature(
-                &request.voter_public_key,
+                &request.voter_member_hex,
                 &request.voter_signature,
                 &message,
             )
@@ -113,7 +113,7 @@ impl VoteService {
 
         let vote = Vote::new(
             request.poll_id,
-            request.voter_public_key,
+            request.voter_member_hex,
             voter_alias,
             request.vote_type.clone(),
             request.voter_signature,

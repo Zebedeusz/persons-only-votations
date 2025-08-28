@@ -68,7 +68,7 @@ impl PollRepository {
             .map_err(|_| PollRepositoryError::LockError)?;
         let polls = storage
             .values()
-            .filter(|poll| poll.creator_public_key == creator_key)
+            .filter(|poll| poll.creator_member_hex == creator_key)
             .cloned()
             .collect();
         Ok(polls)

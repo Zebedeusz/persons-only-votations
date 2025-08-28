@@ -21,7 +21,7 @@ pub trait VoteRepository: Send + Sync {
     fn get_vote_by_poll_and_voter(
         &self,
         poll_id: u32,
-        voter_public_key: &str,
+        voter_member_hex: &str,
     ) -> Result<Option<Vote>>;
     fn get_vote_by_poll_and_alias(&self, poll_id: u32, voter_alias: &str) -> Result<Option<Vote>>;
     fn count_votes_by_poll(&self, poll_id: u32) -> Result<(u32, u32)>; // (yay_count, nay_count)
@@ -58,12 +58,12 @@ impl VoteRepository for InMemoryVoteRepository {
             .lock()
             .map_err(|_| VoteRepositoryError::LockError)?;
 
-        // Check for duplicate vote by public key
-        let voter_index_key = (vote.poll_id, vote.voter_public_key.clone());
+        // Check for duplicate vote by member key
+        let voter_index_key = (vote.poll_id, vote.voter_member_hex.clone());
         if voter_poll_index.contains_key(&voter_index_key) {
             return Err(VoteRepositoryError::DuplicateVote {
                 poll_id: vote.poll_id,
-                voter_key: vote.voter_public_key.clone(),
+                voter_key: vote.voter_member_hex.clone(),
             });
         }
 
@@ -98,7 +98,7 @@ impl VoteRepository for InMemoryVoteRepository {
     fn get_vote_by_poll_and_voter(
         &self,
         poll_id: u32,
-        voter_public_key: &str,
+        voter_member_hex: &str,
     ) -> Result<Option<Vote>> {
         let votes = self
             .votes
@@ -107,7 +107,7 @@ impl VoteRepository for InMemoryVoteRepository {
 
         Ok(votes
             .iter()
-            .find(|vote| vote.poll_id == poll_id && vote.voter_public_key == voter_public_key)
+            .find(|vote| vote.poll_id == poll_id && vote.voter_member_hex == voter_member_hex)
             .cloned())
     }
 

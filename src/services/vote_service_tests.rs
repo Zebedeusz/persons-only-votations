@@ -53,7 +53,7 @@ impl VoteRepository for MockVoteRepository {
     fn get_vote_by_poll_and_voter(
         &self,
         _poll_id: u32,
-        _voter_public_key: &str,
+        _voter_member_hex: &str,
     ) -> Result<Option<Vote>, VoteRepositoryError> {
         self.get_vote_by_poll_and_voter_result
             .lock()
@@ -186,7 +186,7 @@ mod tests {
     fn create_valid_vote_request() -> CastVoteRequest {
         CastVoteRequest {
             poll_id: 1,
-            voter_public_key: "voter_key".to_string(),
+            voter_member_hex: "voter_key".to_string(),
             vote_type: VoteType::Yay,
             voter_signature: "signature".to_string(),
             ring_proof: "0123456789abcdef".to_string(),

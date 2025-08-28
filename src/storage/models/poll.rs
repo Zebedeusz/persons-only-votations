@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Poll {
     pub id: u32,
-    pub creator_public_key: String,
+    pub creator_member_hex: String, // Hex-encoded EncodedPublicKey from verifiable crypto
     pub name: String,
     pub description: String,
     pub yay_votes: u32,
@@ -23,22 +23,22 @@ pub struct PollData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePollRequest {
-    pub creator_public_key: String,
-    pub creator_signature: String,
+    pub creator_member_hex: String, // Hex-encoded EncodedPublicKey from verifiable crypto
+    pub creator_signature: String,  // Hex-encoded verifiable crypto signature
     pub poll_data: PollData,
 }
 
 impl Poll {
     pub fn new(
         id: u32,
-        creator_public_key: String,
+        creator_member_hex: String,
         poll_data: PollData,
         context: String,
         created_at: i64,
     ) -> Self {
         Self {
             id,
-            creator_public_key,
+            creator_member_hex,
             name: poll_data.name,
             description: poll_data.description,
             yay_votes: 0,

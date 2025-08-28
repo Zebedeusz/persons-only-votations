@@ -1,8 +1,9 @@
 use crate::chain::runtime::{IndividualityConfig, PersonRecord, PersonalId, RingRecord};
 use async_trait::async_trait;
-use sp_core::{Pair, sr25519};
+use sp_core::sr25519;
 use subxt::OnlineClient;
 use thiserror::Error;
+use verifiable::{GenerateVerifiable, ring_vrf_impl::{BandersnatchVrfVerifiable, EncodedPublicKey}};
 
 #[derive(Error, Debug, Clone)]
 pub enum ChainError {
@@ -28,10 +29,10 @@ pub type Result<T> = std::result::Result<T, ChainError>;
 
 #[async_trait]
 pub trait ChainClient: Send + Sync {
-    async fn verify_personhood(&self, public_key: &str, signature: &str) -> Result<bool>;
+    async fn verify_personhood(&self, member_hex: &str, signature: &str) -> Result<bool>;
     async fn validate_signature(
         &self,
-        public_key: &str,
+        member_hex: &str,
         signature: &str,
         message: &[u8],
     ) -> Result<bool>;
@@ -104,35 +105,32 @@ impl PeopleMultiClient {
         }
     }
 
-    async fn get_personal_id_by_key(&self, public_key_hex: &str) -> Result<Option<PersonalId>> {
+    async fn get_personal_id_by_key(&self, member_hex: &str) -> Result<Option<PersonalId>> {
         // Mock client fallback for testing
         if self.endpoint == "mock" {
-            return self.get_personal_id_by_key_mock(public_key_hex).await;
+            return self.get_personal_id_by_key_mock(member_hex).await;
         }
 
-        // Parse the hex public key
-        let public_key_bytes = hex::decode(public_key_hex)
+        // Parse the hex member key
+        let member_bytes = hex::decode(member_hex)
             .map_err(|e| ChainError::InvalidPublicKey(format!("Invalid hex format: {}", e)))?;
 
-        if public_key_bytes.len() != 32 {
+        if member_bytes.len() != 32 {
             return Err(ChainError::InvalidPublicKey(
-                "Public key must be 32 bytes".to_string(),
+                "Member key must be 32 bytes".to_string(),
             ));
         }
-
-        let public_key = sr25519::Public::from_raw(public_key_bytes.try_into().map_err(|_| {
-            ChainError::InvalidPublicKey("Failed to convert to sr25519 public key".to_string())
-        })?);
 
         let client = self
             .client
             .as_ref()
             .ok_or_else(|| ChainError::ConnectionFailed("No client available".to_string()))?;
 
-        // Convert sr25519::Public to EncodedPublicKey expected by the storage
-        // The EncodedPublicKey should be the raw bytes of the sr25519 public key
-        use crate::chain::subxt_generated_people_apis::api::runtime_types::verifiable::ring_vrf_impl::EncodedPublicKey;
-        let encoded_key = EncodedPublicKey(public_key.0);
+        // Create EncodedPublicKey from the member bytes
+        use crate::chain::subxt_generated_people_apis::api::runtime_types::verifiable::ring_vrf_impl::EncodedPublicKey as ChainEncodedPublicKey;
+        let mut key_array = [0u8; 32];
+        key_array.copy_from_slice(&member_bytes);
+        let encoded_key = ChainEncodedPublicKey(key_array);
 
         let storage_query = crate::chain::subxt_generated_people_apis::api::storage()
             .people()
@@ -215,6 +213,8 @@ impl PeopleMultiClient {
     }
 
     async fn get_ring_record(&self, ring_index: u16) -> Result<Option<RingRecord>> {
+        tracing::debug!("Getting ring record for ring index: {}", ring_index);
+        
         // Mock client fallback for testing
         if self.endpoint == "mock" {
             return self.get_ring_record_mock(ring_index).await;
@@ -225,30 +225,40 @@ impl PeopleMultiClient {
             .as_ref()
             .ok_or_else(|| ChainError::ConnectionFailed("No client available".to_string()))?;
 
-        // Query RingsState to check if ring exists
+        // Query the Root storage map for the specific ring
         let storage_query = crate::chain::subxt_generated_people_apis::api::storage()
             .people()
-            .rings_state();
+            .root(&(ring_index as u32));
 
         match client.storage().at_latest().await {
             Ok(storage) => {
                 match storage.fetch(&storage_query).await {
-                    Ok(rings_state_opt) => {
-                        match rings_state_opt {
-                            Some(_rings_state) => {
+                    Ok(ring_root_opt) => {
+                        match ring_root_opt {
+                            Some(ring_root) => {
+                                tracing::debug!("Found ring root for ring {}: revision {}", ring_index, ring_root.revision);
+                                // The chain stores a 384-byte ring root commitment, but our RingRecord expects sr25519::Public (32 bytes)
+                                // For now, we'll create a mock sr25519::Public since we just need to verify the ring exists
+                                let mock_root = sr25519::Public::from_raw([1u8; 32]);
                                 let ring_record = RingRecord {
-                                    root: sr25519::Public::from_raw([1u8; 32]), // Mock root - would need to derive from actual ring data
-                                    revision: ring_index as u32,
+                                    root: mock_root, 
+                                    revision: ring_root.revision,
                                 };
                                 Ok(Some(ring_record))
                             }
-                            None => Ok(None),
+                            None => {
+                                tracing::debug!("No ring root found for ring {}", ring_index);
+                                Ok(None)
+                            }
                         }
                     }
-                    Err(e) => Err(ChainError::QueryFailed(format!(
-                        "Failed to query RingsState: {}",
-                        e
-                    ))),
+                    Err(e) => {
+                        tracing::error!("Failed to query ring root for ring {}: {}", ring_index, e);
+                        Err(ChainError::QueryFailed(format!(
+                            "Failed to query Root for ring {}: {}",
+                            ring_index, e
+                        )))
+                    }
                 }
             }
             Err(e) => Err(ChainError::QueryFailed(format!(
@@ -261,83 +271,118 @@ impl PeopleMultiClient {
 
 #[async_trait]
 impl ChainClient for PeopleMultiClient {
-    async fn verify_personhood(&self, public_key: &str, _signature: &str) -> Result<bool> {
+    async fn verify_personhood(&self, member_hex: &str, _signature: &str) -> Result<bool> {
+        tracing::debug!("Starting personhood verification for member: {}", member_hex);
+        
         // Mock client fallback for testing
         if self.endpoint == "mock" {
-            return self.verify_personhood_mock(public_key).await;
+            tracing::debug!("Using mock client for personhood verification");
+            return self.verify_personhood_mock(member_hex).await;
         }
 
-        // 1. Get PersonalId from public key
-        let personal_id = match self.get_personal_id_by_key(public_key).await? {
-            Some(id) => id,
-            None => return Ok(false), // Key not found in people pallet
+        tracing::debug!("Using real chain client for personhood verification");
+
+        // 1. Get PersonalId from member key
+        tracing::debug!("Step 1: Looking up PersonalId for member key...");
+        let personal_id = match self.get_personal_id_by_key(member_hex).await? {
+            Some(id) => {
+                tracing::debug!("Step 1: Found PersonalId: {}", id);
+                id
+            },
+            None => {
+                tracing::debug!("Step 1: FAILED - Key not found in people pallet");
+                return Ok(false); // Key not found in people pallet
+            }
         };
 
         // 2. Get person record
+        tracing::debug!("Step 2: Getting person record for PersonalId: {}", personal_id);
         let person_record = match self.get_person_record(personal_id).await? {
-            Some(record) => record,
-            None => return Ok(false), // Person record not found
+            Some(record) => {
+                tracing::debug!("Step 2: Found person record, position: {:?}", record.position);
+                record
+            },
+            None => {
+                tracing::debug!("Step 2: FAILED - Person record not found");
+                return Ok(false); // Person record not found
+            }
         };
 
         // 3. Check if person is included in a ring (not just onboarding)
+        tracing::debug!("Step 3: Checking if person is included in a ring...");
         let ring_index = match person_record.position.ring_index() {
-            Some(index) => index,
-            None => return Ok(false), // Person is still onboarding
+            Some(index) => {
+                tracing::debug!("Step 3: Person is in ring: {}", index);
+                index
+            },
+            None => {
+                tracing::debug!("Step 3: FAILED - Person is still onboarding or not in a ring");
+                return Ok(false); // Person is still onboarding
+            }
         };
 
         // 4. Verify the ring is active
+        tracing::debug!("Step 4: Verifying ring {} is active...", ring_index);
         let _ring_record = match self.get_ring_record(ring_index).await? {
-            Some(record) => record,
-            None => return Ok(false), // Ring not found or inactive
+            Some(record) => {
+                tracing::debug!("Step 4: Ring is active, revision: {}", record.revision);
+                record
+            },
+            None => {
+                tracing::debug!("Step 4: FAILED - Ring not found or inactive");
+                return Ok(false); // Ring not found or inactive
+            }
         };
 
         // If we get here, the person is verified and in an active ring
+        tracing::debug!("✓ Personhood verification successful for member: {}", member_hex);
         Ok(true)
     }
 
     async fn validate_signature(
         &self,
-        public_key: &str,
+        member_hex: &str,
         signature: &str,
         message: &[u8],
     ) -> Result<bool> {
         // Mock client fallback for testing
         if self.endpoint == "mock" {
             return self
-                .validate_signature_mock(public_key, signature, message)
+                .validate_signature_mock(member_hex, signature, message)
                 .await;
         }
 
-        // Parse the public key
-        let public_key_bytes = hex::decode(public_key)
-            .map_err(|e| ChainError::InvalidSignature(format!("Invalid public key hex: {}", e)))?;
+        // Parse the member key
+        let member_bytes = hex::decode(member_hex)
+            .map_err(|e| ChainError::InvalidSignature(format!("Invalid member key hex: {}", e)))?;
 
-        if public_key_bytes.len() != 32 {
+        if member_bytes.len() != 32 {
             return Err(ChainError::InvalidSignature(
-                "Public key must be 32 bytes".to_string(),
+                "Member key must be 32 bytes".to_string(),
             ));
         }
 
-        let public_key = sr25519::Public::from_raw(public_key_bytes.try_into().map_err(|_| {
-            ChainError::InvalidSignature("Failed to convert to sr25519 public key".to_string())
-        })?);
+        // Create EncodedPublicKey from member bytes
+        let mut key_array = [0u8; 32];
+        key_array.copy_from_slice(&member_bytes);
+        let encoded_member = EncodedPublicKey(key_array);
 
         // Parse the signature
         let signature_bytes = hex::decode(signature)
             .map_err(|e| ChainError::InvalidSignature(format!("Invalid signature hex: {}", e)))?;
 
-        if signature_bytes.len() != 64 {
+        // Verifiable crypto signatures are 96 bytes (PLAIN_VRF_SIGNATURE_SIZE)
+        if signature_bytes.len() != 96 {
             return Err(ChainError::InvalidSignature(
-                "Signature must be 64 bytes".to_string(),
+                "Verifiable signature must be 96 bytes".to_string(),
             ));
         }
 
-        let signature = sr25519::Signature::from_raw(signature_bytes.try_into().map_err(|_| {
-            ChainError::InvalidSignature("Failed to convert to sr25519 signature".to_string())
-        })?);
+        let mut signature_array = [0u8; 96];
+        signature_array.copy_from_slice(&signature_bytes);
 
-        // Verify the signature using sr25519
-        let is_valid = sr25519::Pair::verify(&signature, message, &public_key);
+        // Verify the signature using verifiable crypto
+        let is_valid = BandersnatchVrfVerifiable::verify_signature(&signature_array, message, &encoded_member);
 
         Ok(is_valid)
     }
@@ -346,28 +391,28 @@ impl ChainClient for PeopleMultiClient {
 impl PeopleMultiClient {
     async fn get_personal_id_by_key_mock(
         &self,
-        public_key_hex: &str,
+        member_hex: &str,
     ) -> Result<Option<PersonalId>> {
-        // Parse the hex public key
-        let public_key_bytes = hex::decode(public_key_hex)
+        // Parse the hex member key
+        let member_bytes = hex::decode(member_hex)
             .map_err(|e| ChainError::InvalidPublicKey(format!("Invalid hex format: {}", e)))?;
 
-        if public_key_bytes.len() != 32 {
+        if member_bytes.len() != 32 {
             return Err(ChainError::InvalidPublicKey(
-                "Public key must be 32 bytes".to_string(),
+                "Member key must be 32 bytes".to_string(),
             ));
         }
 
         // Mock implementation - return a PersonalId based on the first 8 bytes of the key
         let personal_id = u64::from_le_bytes([
-            public_key_bytes[0],
-            public_key_bytes[1],
-            public_key_bytes[2],
-            public_key_bytes[3],
-            public_key_bytes[4],
-            public_key_bytes[5],
-            public_key_bytes[6],
-            public_key_bytes[7],
+            member_bytes[0],
+            member_bytes[1],
+            member_bytes[2],
+            member_bytes[3],
+            member_bytes[4],
+            member_bytes[5],
+            member_bytes[6],
+            member_bytes[7],
         ]);
         Ok(Some(personal_id))
     }
@@ -400,8 +445,8 @@ impl PeopleMultiClient {
         Ok(Some(ring_record))
     }
 
-    async fn verify_personhood_mock(&self, public_key: &str) -> Result<bool> {
-        if public_key.is_empty() {
+    async fn verify_personhood_mock(&self, member_hex: &str) -> Result<bool> {
+        if member_hex.is_empty() {
             return Ok(false);
         }
 
@@ -409,35 +454,62 @@ impl PeopleMultiClient {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // For prototype: accept keys that look like hex (even length, valid hex chars)
-        if public_key.len() % 2 != 0 {
+        if member_hex.len() != 64 { // 32 bytes * 2 hex chars per byte
             return Ok(false);
         }
 
-        match hex::decode(public_key) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+        match hex::decode(member_hex) {
+            Ok(bytes) if bytes.len() == 32 => {
+                // For mock mode, accept any properly formatted 32-byte hex key
+                // In production, this would validate against the actual chain state
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 
     async fn validate_signature_mock(
         &self,
-        public_key: &str,
+        member_hex: &str,
         signature: &str,
         message: &[u8],
     ) -> Result<bool> {
         // For prototype, basic validation
-        if public_key.is_empty() || signature.is_empty() || message.is_empty() {
+        if member_hex.is_empty() || signature.is_empty() || message.is_empty() {
             return Ok(false);
         }
 
         // Simulate signature validation delay
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-        // For prototype: accept if both key and signature are valid hex
-        let key_valid = hex::decode(public_key).is_ok();
-        let sig_valid = hex::decode(signature).is_ok();
+        // Parse and validate member key
+        let member_bytes = match hex::decode(member_hex) {
+            Ok(bytes) if bytes.len() == 32 => bytes,
+            _ => return Ok(false),
+        };
 
-        Ok(key_valid && sig_valid)
+        // Parse and validate signature
+        let signature_bytes = match hex::decode(signature) {
+            Ok(bytes) if bytes.len() == 96 => bytes, // Verifiable signature size
+            _ => return Ok(false),
+        };
+
+        // Create verifiable types
+        let mut key_array = [0u8; 32];
+        key_array.copy_from_slice(&member_bytes);
+        let encoded_key = EncodedPublicKey(key_array);
+
+        let mut sig_array = [0u8; 96];
+        sig_array.copy_from_slice(&signature_bytes);
+
+        // Validate member key format
+        if !BandersnatchVrfVerifiable::is_member_valid(&encoded_key) {
+            return Ok(false);
+        }
+
+        // For mock, we can't do real signature verification without the secret,
+        // so just return true for well-formed inputs
+        Ok(true)
     }
 }
 

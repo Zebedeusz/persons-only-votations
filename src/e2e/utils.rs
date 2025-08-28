@@ -35,10 +35,10 @@ impl TestPoll {
         let message = create_poll_signature_message(&self.title, &self.description, ends_at);
 
         // Sign the message
-        let signature = creator_keypair.sign_message(&message);
+        let signature = creator_keypair.sign_message(&message).expect("Failed to sign message");
 
         serde_json::json!({
-            "creator_public_key": creator_keypair.public_key_hex,
+            "creator_member_hex": creator_keypair.member_hex,
             "creator_signature": signature,
             "poll_data": {
                 "name": self.title,
@@ -128,16 +128,16 @@ impl TestHelpers {
     ) -> HashMap<&'static str, Value> {
         // Create signature message
         let message =
-            create_vote_signature_message(poll_id, &voter_keypair.public_key_hex, vote_type);
+            create_vote_signature_message(poll_id, &voter_keypair.member_hex, vote_type);
 
         // Sign the message
-        let signature = voter_keypair.sign_message(&message);
+        let signature = voter_keypair.sign_message(&message).expect("Failed to sign message");
 
         let mut vote_data = HashMap::new();
         vote_data.insert("poll_id", Value::Number(poll_id.into()));
         vote_data.insert(
-            "voter_public_key",
-            Value::String(voter_keypair.public_key_hex.clone()),
+            "voter_member_hex",
+            Value::String(voter_keypair.member_hex.clone()),
         );
         vote_data.insert("vote_type", Value::String(vote_type.to_string()));
         vote_data.insert("voter_signature", Value::String(signature));
