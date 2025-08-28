@@ -92,7 +92,7 @@ async fn initialize_chain_client(
             }
             Err(e) => {
                 error!("People Chain health check error: {}", e);
-                Err(format!("People Chain health check error: {}", e).into())
+                Err(format!("People Chain health check error: {e}").into())
             }
         },
         Err(e) => {

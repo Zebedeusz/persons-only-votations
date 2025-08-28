@@ -54,7 +54,7 @@ async fn create_poll(
 ) -> Result<impl IntoResponse, ApiError> {
     let handler = PollHandler::new(state.poll_service.clone());
     let json_body = serde_json::to_string(&payload)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?;
+        .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))?;
 
     let response = handler.create_poll(&json_body).await?;
     Ok((StatusCode::CREATED, response))
@@ -67,7 +67,7 @@ async fn cast_vote(
 ) -> Result<impl IntoResponse, ApiError> {
     let handler = VoteHandler::new(state.vote_service.clone());
     let json_body = serde_json::to_string(&payload)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?;
+        .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))?;
 
     let response = handler.cast_vote(&poll_id, &json_body).await?;
     Ok((StatusCode::CREATED, response))

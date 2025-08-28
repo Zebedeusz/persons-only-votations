@@ -33,6 +33,12 @@ pub struct InMemoryVoteRepository {
     alias_poll_index: Arc<Mutex<HashMap<(u32, String), bool>>>, // (poll_id, voter_alias) -> exists
 }
 
+impl Default for InMemoryVoteRepository {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryVoteRepository {
     pub fn new() -> Self {
         Self {

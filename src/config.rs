@@ -104,6 +104,6 @@ mod tests {
         assert_eq!(config.people_chain_protocol, "ws");
         assert_eq!(config.people_chain_endpoint(), "ws://127.0.0.1:9944");
         assert_eq!(config.log_level, "info");
-        assert_eq!(config.mock_mode, false);
+        assert!(!config.mock_mode);
     }
 }

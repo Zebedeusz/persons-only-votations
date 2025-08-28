@@ -33,7 +33,7 @@ impl PollRepository {
         }
     }
 
-    pub fn create_poll(&self, mut poll: Poll) -> Result<u32> {
+    fn create_poll_impl(&self, mut poll: Poll) -> Result<u32> {
         let mut storage = self
             .storage
             .lock()
@@ -53,7 +53,7 @@ impl PollRepository {
         Ok(id)
     }
 
-    pub fn get_poll_by_id(&self, id: u32) -> Result<Option<Poll>> {
+    fn get_poll_by_id_impl(&self, id: u32) -> Result<Option<Poll>> {
         let storage = self
             .storage
             .lock()
@@ -61,7 +61,7 @@ impl PollRepository {
         Ok(storage.get(&id).cloned())
     }
 
-    pub fn get_polls_by_creator(&self, creator_key: &str) -> Result<Vec<Poll>> {
+    fn get_polls_by_creator_impl(&self, creator_key: &str) -> Result<Vec<Poll>> {
         let storage = self
             .storage
             .lock()
@@ -74,7 +74,7 @@ impl PollRepository {
         Ok(polls)
     }
 
-    pub fn get_all_polls(&self) -> Result<Vec<Poll>> {
+    fn get_all_polls_impl(&self) -> Result<Vec<Poll>> {
         let storage = self
             .storage
             .lock()
@@ -83,13 +83,13 @@ impl PollRepository {
         Ok(polls)
     }
 
-    pub fn update_poll(&self, poll: Poll) -> Result<()> {
+    fn update_poll_impl(&self, poll: Poll) -> Result<()> {
         let mut storage = self
             .storage
             .lock()
             .map_err(|_| PollRepositoryError::LockError)?;
-        if storage.contains_key(&poll.id) {
-            storage.insert(poll.id, poll);
+        if let std::collections::hash_map::Entry::Occupied(mut e) = storage.entry(poll.id) {
+            e.insert(poll);
             Ok(())
         } else {
             Err(PollRepositoryError::PollNotFound(poll.id))
@@ -99,23 +99,23 @@ impl PollRepository {
 
 impl Repository for PollRepository {
     fn create_poll(&self, poll: Poll) -> Result<u32> {
-        self.create_poll(poll)
+        self.create_poll_impl(poll)
     }
 
     fn get_poll_by_id(&self, id: u32) -> Result<Option<Poll>> {
-        self.get_poll_by_id(id)
+        self.get_poll_by_id_impl(id)
     }
 
     fn get_polls_by_creator(&self, creator_key: &str) -> Result<Vec<Poll>> {
-        self.get_polls_by_creator(creator_key)
+        self.get_polls_by_creator_impl(creator_key)
     }
 
     fn get_all_polls(&self) -> Result<Vec<Poll>> {
-        self.get_all_polls()
+        self.get_all_polls_impl()
     }
 
     fn update_poll(&self, poll: Poll) -> Result<()> {
-        self.update_poll(poll)
+        self.update_poll_impl(poll)
     }
 }
 

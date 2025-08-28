@@ -95,8 +95,7 @@ impl PeopleMultiClient {
             Some(client) => match client.blocks().at_latest().await {
                 Ok(_) => Ok(true),
                 Err(e) => Err(ChainError::ConnectionFailed(format!(
-                    "Health check failed: {}",
-                    e
+                    "Health check failed: {e}"
                 ))),
             },
             None => Err(ChainError::ConnectionFailed(
@@ -113,7 +112,7 @@ impl PeopleMultiClient {
 
         // Parse the hex member key
         let member_bytes = hex::decode(member_hex)
-            .map_err(|e| ChainError::InvalidPublicKey(format!("Invalid hex format: {}", e)))?;
+            .map_err(|e| ChainError::InvalidPublicKey(format!("Invalid hex format: {e}")))?;
 
         if member_bytes.len() != 32 {
             return Err(ChainError::InvalidPublicKey(
@@ -140,13 +139,11 @@ impl PeopleMultiClient {
             Ok(storage) => match storage.fetch(&storage_query).await {
                 Ok(personal_id_opt) => Ok(personal_id_opt),
                 Err(e) => Err(ChainError::QueryFailed(format!(
-                    "Failed to query Keys: {}",
-                    e
+                    "Failed to query Keys: {e}"
                 ))),
             },
             Err(e) => Err(ChainError::QueryFailed(format!(
-                "Failed to get storage: {}",
-                e
+                "Failed to get storage: {e}"
             ))),
         }
     }
@@ -168,7 +165,7 @@ impl PeopleMultiClient {
         // Query People storage map
         let storage_query = crate::chain::subxt_generated_people_apis::api::storage()
             .people()
-            .people(&personal_id);
+            .people(personal_id);
 
         match client.storage().at_latest().await {
             Ok(storage) => {
@@ -200,14 +197,12 @@ impl PeopleMultiClient {
                         }
                     }
                     Err(e) => Err(ChainError::QueryFailed(format!(
-                        "Failed to query People: {}",
-                        e
+                        "Failed to query People: {e}"
                     ))),
                 }
             }
             Err(e) => Err(ChainError::QueryFailed(format!(
-                "Failed to get storage: {}",
-                e
+                "Failed to get storage: {e}"
             ))),
         }
     }
@@ -228,7 +223,7 @@ impl PeopleMultiClient {
         // Query the Root storage map for the specific ring
         let storage_query = crate::chain::subxt_generated_people_apis::api::storage()
             .people()
-            .root(&(ring_index as u32));
+            .root(ring_index as u32);
 
         match client.storage().at_latest().await {
             Ok(storage) => {
@@ -255,15 +250,13 @@ impl PeopleMultiClient {
                     Err(e) => {
                         tracing::error!("Failed to query ring root for ring {}: {}", ring_index, e);
                         Err(ChainError::QueryFailed(format!(
-                            "Failed to query Root for ring {}: {}",
-                            ring_index, e
+                            "Failed to query Root for ring {ring_index}: {e}"
                         )))
                     }
                 }
             }
             Err(e) => Err(ChainError::QueryFailed(format!(
-                "Failed to get storage: {}",
-                e
+                "Failed to get storage: {e}"
             ))),
         }
     }
@@ -272,7 +265,6 @@ impl PeopleMultiClient {
 #[async_trait]
 impl ChainClient for PeopleMultiClient {
     async fn verify_personhood(&self, member_hex: &str, _signature: &str) -> Result<bool> {
-        tracing::debug!("Starting personhood verification for member: {}", member_hex);
         
         // Mock client fallback for testing
         if self.endpoint == "mock" {
@@ -283,59 +275,46 @@ impl ChainClient for PeopleMultiClient {
         tracing::debug!("Using real chain client for personhood verification");
 
         // 1. Get PersonalId from member key
-        tracing::debug!("Step 1: Looking up PersonalId for member key...");
         let personal_id = match self.get_personal_id_by_key(member_hex).await? {
             Some(id) => {
-                tracing::debug!("Step 1: Found PersonalId: {}", id);
                 id
             },
             None => {
-                tracing::debug!("Step 1: FAILED - Key not found in people pallet");
                 return Ok(false); // Key not found in people pallet
             }
         };
 
         // 2. Get person record
-        tracing::debug!("Step 2: Getting person record for PersonalId: {}", personal_id);
         let person_record = match self.get_person_record(personal_id).await? {
             Some(record) => {
-                tracing::debug!("Step 2: Found person record, position: {:?}", record.position);
                 record
             },
             None => {
-                tracing::debug!("Step 2: FAILED - Person record not found");
                 return Ok(false); // Person record not found
             }
         };
 
         // 3. Check if person is included in a ring (not just onboarding)
-        tracing::debug!("Step 3: Checking if person is included in a ring...");
         let ring_index = match person_record.position.ring_index() {
             Some(index) => {
-                tracing::debug!("Step 3: Person is in ring: {}", index);
                 index
             },
             None => {
-                tracing::debug!("Step 3: FAILED - Person is still onboarding or not in a ring");
                 return Ok(false); // Person is still onboarding
             }
         };
 
         // 4. Verify the ring is active
-        tracing::debug!("Step 4: Verifying ring {} is active...", ring_index);
         let _ring_record = match self.get_ring_record(ring_index).await? {
             Some(record) => {
-                tracing::debug!("Step 4: Ring is active, revision: {}", record.revision);
                 record
             },
             None => {
-                tracing::debug!("Step 4: FAILED - Ring not found or inactive");
                 return Ok(false); // Ring not found or inactive
             }
         };
 
         // If we get here, the person is verified and in an active ring
-        tracing::debug!("✓ Personhood verification successful for member: {}", member_hex);
         Ok(true)
     }
 
@@ -354,7 +333,7 @@ impl ChainClient for PeopleMultiClient {
 
         // Parse the member key
         let member_bytes = hex::decode(member_hex)
-            .map_err(|e| ChainError::InvalidSignature(format!("Invalid member key hex: {}", e)))?;
+            .map_err(|e| ChainError::InvalidSignature(format!("Invalid member key hex: {e}")))?;
 
         if member_bytes.len() != 32 {
             return Err(ChainError::InvalidSignature(
@@ -369,7 +348,7 @@ impl ChainClient for PeopleMultiClient {
 
         // Parse the signature
         let signature_bytes = hex::decode(signature)
-            .map_err(|e| ChainError::InvalidSignature(format!("Invalid signature hex: {}", e)))?;
+            .map_err(|e| ChainError::InvalidSignature(format!("Invalid signature hex: {e}")))?;
 
         // Verifiable crypto signatures are 96 bytes (PLAIN_VRF_SIGNATURE_SIZE)
         if signature_bytes.len() != 96 {
@@ -395,7 +374,7 @@ impl PeopleMultiClient {
     ) -> Result<Option<PersonalId>> {
         // Parse the hex member key
         let member_bytes = hex::decode(member_hex)
-            .map_err(|e| ChainError::InvalidPublicKey(format!("Invalid hex format: {}", e)))?;
+            .map_err(|e| ChainError::InvalidPublicKey(format!("Invalid hex format: {e}")))?;
 
         if member_bytes.len() != 32 {
             return Err(ChainError::InvalidPublicKey(

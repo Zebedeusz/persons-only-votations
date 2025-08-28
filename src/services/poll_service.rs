@@ -42,11 +42,9 @@ impl PollService {
     }
 
     pub async fn create_poll(&self, request: CreatePollRequest) -> Result<CreatePollResponse> {
-        tracing::debug!("Starting poll creation validation");
         self.validate_poll_data(&request.poll_data)?;
 
         let message = self.create_signature_message(&request)?;
-        tracing::debug!("Created signature message: {}", String::from_utf8_lossy(&message));
         
         let signature_valid = self
             .chain_client
@@ -57,7 +55,6 @@ impl PollService {
             )
             .await?;
 
-        tracing::debug!("Signature validation result: {}", signature_valid);
 
         if !signature_valid {
             tracing::error!("Signature validation failed for member: {}", request.creator_member_hex);
@@ -71,7 +68,6 @@ impl PollService {
             .verify_personhood(&request.creator_member_hex, &request.creator_signature)
             .await?;
 
-        tracing::debug!("Personhood verification result: {}", person_verified);
 
         if !person_verified {
             tracing::error!("Personhood verification failed for member: {}", request.creator_member_hex);
@@ -162,7 +158,7 @@ impl PollService {
 
     fn create_signature_message(&self, request: &CreatePollRequest) -> Result<Vec<u8>> {
         let message_data = serde_json::to_string(&request.poll_data).map_err(|e| {
-            PollServiceError::InvalidData(format!("JSON serialization failed: {}", e))
+            PollServiceError::InvalidData(format!("JSON serialization failed: {e}"))
         })?;
         Ok(message_data.as_bytes().to_vec())
     }

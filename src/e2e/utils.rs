@@ -64,7 +64,7 @@ impl TestHelpers {
         poll: &TestPoll,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let response = http_client
-            .post(&format!("{}/polls", base_url))
+            .post(format!("{base_url}/polls"))
             .header("Content-Type", "application/json")
             .json(&poll.to_json())
             .send()
@@ -89,7 +89,7 @@ impl TestHelpers {
         poll_id: &str,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let response = http_client
-            .get(&format!("{}/polls/{}", base_url, poll_id))
+            .get(format!("{base_url}/polls/{poll_id}"))
             .send()
             .await?;
 
@@ -107,7 +107,7 @@ impl TestHelpers {
         vote_data: &HashMap<&str, Value>,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let response = http_client
-            .post(&format!("{}/polls/{}/vote", base_url, poll_id))
+            .post(format!("{base_url}/polls/{poll_id}/vote"))
             .header("Content-Type", "application/json")
             .json(vote_data)
             .send()
@@ -115,7 +115,7 @@ impl TestHelpers {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(format!("Failed to submit vote: {}", error_text).into());
+            return Err(format!("Failed to submit vote: {error_text}").into());
         }
 
         Ok(response.json().await?)

@@ -11,6 +11,12 @@ pub struct MockChainClient {
     pub validate_signature_result: Arc<Mutex<Result<bool, ChainError>>>,
 }
 
+impl Default for MockChainClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockChainClient {
     pub fn new() -> Self {
         Self {
@@ -53,6 +59,12 @@ pub struct MockRepository {
     pub update_poll_result: Arc<Mutex<Result<(), PollRepositoryError>>>,
     pub get_poll_result: Arc<Mutex<Result<Option<Poll>, PollRepositoryError>>>,
     pub get_polls_by_creator_result: Arc<Mutex<Result<Vec<Poll>, PollRepositoryError>>>,
+}
+
+impl Default for MockRepository {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockRepository {

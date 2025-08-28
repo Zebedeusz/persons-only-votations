@@ -22,10 +22,10 @@ impl From<PollServiceError> for ApiError {
             PollServiceError::InvalidData(msg) => ApiError::BadRequest(msg),
             PollServiceError::AuthorizationFailed(msg) => ApiError::Unauthorized(msg),
             PollServiceError::ChainError(e) => {
-                ApiError::InternalError(format!("Chain error: {}", e))
+                ApiError::InternalError(format!("Chain error: {e}"))
             }
             PollServiceError::RepositoryError(e) => {
-                ApiError::InternalError(format!("Storage error: {}", e))
+                ApiError::InternalError(format!("Storage error: {e}"))
             }
             PollServiceError::SystemTimeError => {
                 ApiError::InternalError("System time error".to_string())
@@ -44,22 +44,17 @@ impl PollHandler {
     }
 
     pub async fn create_poll(&self, json_body: &str) -> Result<String, ApiError> {
-        tracing::debug!("Poll creation request received: {}", json_body);
         
         // Parse request
         let request: CreatePollRequest = serde_json::from_str(json_body)
-            .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?;
+            .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))?;
 
-        tracing::debug!("Parsed request - Member: {}", request.creator_member_hex);
 
         // Call service
         let response = self.poll_service.create_poll(request).await?;
 
         // Return response as JSON
-        let json_response = serde_json::to_string(&response)
-            .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {}", e)))?;
-
-        Ok(json_response)
+        to_json_response(&response)
     }
 
     pub async fn get_poll(&self, poll_id: u32) -> Result<String, ApiError> {
@@ -67,10 +62,7 @@ impl PollHandler {
 
         match poll {
             Some(poll) => {
-                let json_response = serde_json::to_string(&poll).map_err(|e| {
-                    ApiError::InternalError(format!("JSON serialization failed: {}", e))
-                })?;
-                Ok(json_response)
+                to_json_response(&poll)
             }
             None => Err(ApiError::NotFound),
         }
@@ -79,20 +71,20 @@ impl PollHandler {
     pub async fn get_polls_by_creator(&self, creator_key: &str) -> Result<String, ApiError> {
         let polls = self.poll_service.get_polls_by_creator(creator_key).await?;
 
-        let json_response = serde_json::to_string(&polls)
-            .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {}", e)))?;
-
-        Ok(json_response)
+        to_json_response(&polls)
     }
 
     pub async fn get_all_polls(&self) -> Result<String, ApiError> {
         let polls = self.poll_service.get_all_polls().await?;
 
-        let json_response = serde_json::to_string(&polls)
-            .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {}", e)))?;
-
-        Ok(json_response)
+        to_json_response(&polls)
     }
+}
+
+// JSON serialization helper
+fn to_json_response<T: serde::Serialize>(data: &T) -> Result<String, ApiError> {
+    serde_json::to_string(data)
+        .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {e}")))
 }
 
 // HTTP status code helpers

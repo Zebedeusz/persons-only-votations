@@ -79,7 +79,7 @@ async fn test_basic_poll_creation_and_retrieval() {
     // Create poll using the recognized test user
     let poll_json = test_poll.to_json_with_keypair(&creator_keypair);
     let response = setup.http_client
-        .post(&format!("{}/polls", setup.config.server_base_url))
+        .post(format!("{}/polls", setup.config.server_base_url))
         .header("Content-Type", "application/json")
         .json(&poll_json)
         .send()
@@ -89,7 +89,7 @@ async fn test_basic_poll_creation_and_retrieval() {
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        panic!("Failed to create poll: {} - {}", status, error_text);
+        panic!("Failed to create poll: {status} - {error_text}");
     }
 
     let response_body: serde_json::Value = response.json().await
@@ -155,7 +155,7 @@ async fn test_poll_voting_without_identity_proof() {
     // Create poll using recognized test user
     let poll_json = test_poll.to_json_with_keypair(&creator_keypair);
     let response = setup.http_client
-        .post(&format!("{}/polls", setup.config.server_base_url))
+        .post(format!("{}/polls", setup.config.server_base_url))
         .header("Content-Type", "application/json")
         .json(&poll_json)
         .send()
@@ -231,7 +231,7 @@ async fn test_recognized_users_poll_creation_and_voting() {
 
     let poll_json = test_poll.to_json_with_keypair(&creator_keypair);
     let response = setup.http_client
-        .post(&format!("{}/polls", setup.config.server_base_url))
+        .post(format!("{}/polls", setup.config.server_base_url))
         .header("Content-Type", "application/json")
         .json(&poll_json)
         .send()
@@ -241,7 +241,7 @@ async fn test_recognized_users_poll_creation_and_voting() {
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        panic!("Failed to create poll: {} - {}", status, error_text);
+        panic!("Failed to create poll: {status} - {error_text}");
     }
 
     let response_body: serde_json::Value = response.json().await
@@ -290,7 +290,7 @@ async fn test_recognized_users_poll_creation_and_voting() {
 
     // Verify vote was recorded by checking vote counts
     let vote_counts_response = setup.http_client
-        .get(&format!("{}/polls/{}/votes", setup.config.server_base_url, poll_id))
+        .get(format!("{}/polls/{}/votes", setup.config.server_base_url, poll_id))
         .send()
         .await
         .expect("Failed to get vote counts");

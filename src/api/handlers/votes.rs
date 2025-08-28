@@ -1,4 +1,10 @@
 use super::polls::ApiError;
+
+// JSON serialization helper
+fn to_json_response<T: serde::Serialize>(data: &T) -> Result<String, ApiError> {
+    serde_json::to_string(data)
+        .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {e}")))
+}
 use crate::services::vote_service::{VoteService, VoteServiceError};
 use crate::storage::models::vote::CastVoteRequest;
 use serde_json;
@@ -17,19 +23,19 @@ impl From<VoteServiceError> for ApiError {
                 "Duplicate vote: voter has already voted on this poll".to_string(),
             ),
             VoteServiceError::ChainError(e) => {
-                ApiError::InternalError(format!("Chain error: {}", e))
+                ApiError::InternalError(format!("Chain error: {e}"))
             }
             VoteServiceError::VoteRepositoryError(e) => {
-                ApiError::InternalError(format!("Vote storage error: {}", e))
+                ApiError::InternalError(format!("Vote storage error: {e}"))
             }
             VoteServiceError::PollRepositoryError(e) => {
-                ApiError::InternalError(format!("Poll storage error: {}", e))
+                ApiError::InternalError(format!("Poll storage error: {e}"))
             }
             VoteServiceError::SystemTimeError => {
                 ApiError::InternalError("System time error".to_string())
             }
             VoteServiceError::RingProofError(e) => {
-                ApiError::BadRequest(format!("Ring proof validation failed: {}", e))
+                ApiError::BadRequest(format!("Ring proof validation failed: {e}"))
             }
         }
     }
@@ -52,7 +58,7 @@ impl VoteHandler {
 
         // Parse request
         let mut request: CastVoteRequest = serde_json::from_str(json_body)
-            .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?;
+            .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))?;
 
         // Set the poll_id from the URL parameter
         request.poll_id = poll_id;
@@ -61,10 +67,7 @@ impl VoteHandler {
         let response = self.vote_service.cast_vote(request).await?;
 
         // Return response as JSON
-        let json_response = serde_json::to_string(&response)
-            .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {}", e)))?;
-
-        Ok(json_response)
+        to_json_response(&response)
     }
 
     pub async fn get_poll_votes(&self, poll_id: &str) -> Result<String, ApiError> {
@@ -83,10 +86,7 @@ impl VoteHandler {
             "nay_votes": nay_count
         });
 
-        let json_response = serde_json::to_string(&response)
-            .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {}", e)))?;
-
-        Ok(json_response)
+        to_json_response(&response)
     }
 }
 

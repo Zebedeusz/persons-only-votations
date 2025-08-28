@@ -7,10 +7,10 @@ pub struct TestKeyPair {
 
 impl TestKeyPair {
     pub fn generate() -> Self {
-        let entropy = [fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), 
-                      fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), 
-                      fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), 
-                      fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..), fastrand::u8(..)];
+        let mut entropy = [0u8; 32];
+        for byte in entropy.iter_mut() {
+            *byte = fastrand::u8(..);
+        }
         let secret = BandersnatchVrfVerifiable::new_secret(entropy);
         let member = BandersnatchVrfVerifiable::member_from_secret(&secret);
         let member_hex = hex::encode(member.0);
@@ -21,19 +21,12 @@ impl TestKeyPair {
         }
     }
 
-    pub fn from_secret_scalar(secret_scalar: &str, member_hex: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        // The test users were generated using personal_id as entropy: [personal_id as u8; 32]
-        // Since we have the secret scalar, we need to reverse-engineer the personal_id
-        // From the chain script: personal_id was used as base_id + i where base_id starts from 
-        // next_personal_id - 4, and i is 0,1,2 for the 3 users.
-        
-        // For the known test users, use the correct entropy mapping found by testing:
+    pub fn from_secret_scalar(_secret_scalar: &str, member_hex: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let entropy = match member_hex {
             "5e465beb01dbafe160ce8216047f2155dd0569f058afd52dcea601025a8d161d" => [0u8; 32], // User 1
             "3f9828dfc4e8fdc12ed5f7e6f380b5d30ff328613e6d3e4a27e24ca3e64474b9" => [1u8; 32], // User 2
             "7539d69a545904e39cabc487a63ae3b9f863afefede3f49c786a5047c5189cdb" => [2u8; 32], // User 3
             _ => {
-                // For other keys, try to derive entropy from member_hex itself
                 let member_bytes = hex::decode(member_hex)?;
                 if member_bytes.len() != 32 {
                     return Err("Member hex must decode to 32 bytes".into());
@@ -45,13 +38,11 @@ impl TestKeyPair {
         };
         
         let secret = BandersnatchVrfVerifiable::new_secret(entropy);
-        
-        // Verify that this secret produces the expected member key
         let derived_member = BandersnatchVrfVerifiable::member_from_secret(&secret);
         let derived_hex = hex::encode(derived_member.0);
         
         if derived_hex != member_hex {
-            return Err(format!("Generated secret doesn't produce expected member key. Expected: {}, Got: {}", member_hex, derived_hex).into());
+            return Err(format!("Generated secret doesn't produce expected member key. Expected: {member_hex}, Got: {derived_hex}").into());
         }
 
         Ok(Self {
@@ -72,9 +63,6 @@ pub fn create_poll_signature_message(
     poll_description: &str,
     ends_at: i64,
 ) -> Vec<u8> {
-    // This matches the poll_service.rs create_signature_message method
-    // which JSON serializes the poll_data struct
-    // IMPORTANT: Field order must match the PollData struct serialization
     use crate::storage::models::poll::PollData;
     
     let poll_data = PollData {
@@ -94,9 +82,7 @@ pub fn create_vote_signature_message(
     voter_member_hex: &str,
     vote_type: &str,
 ) -> Vec<u8> {
-    // For votes, we'll create a simple message format
-    // Using member_hex instead of public_key for consistency
-    format!("vote:{}:{}:{}", poll_id, voter_member_hex, vote_type)
+    format!("vote:{poll_id}:{voter_member_hex}:{vote_type}")
         .as_bytes()
         .to_vec()
 }

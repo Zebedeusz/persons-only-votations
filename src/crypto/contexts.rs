@@ -1,7 +1,7 @@
 use blake2::{Blake2b512, Digest};
 
 pub fn generate_poll_context(poll_id: u32) -> [u8; 32] {
-    let context_string = format!("PERSONS_POLL_{}", poll_id);
+    let context_string = format!("PERSONS_POLL_{poll_id}");
     let mut hasher = Blake2b512::new();
     hasher.update(context_string.as_bytes());
     let result = hasher.finalize();

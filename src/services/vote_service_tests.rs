@@ -15,6 +15,12 @@ pub struct MockVoteRepository {
     pub count_votes_by_poll_result: Arc<Mutex<Result<(u32, u32), VoteRepositoryError>>>,
 }
 
+impl Default for MockVoteRepository {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockVoteRepository {
     pub fn new() -> Self {
         Self {
@@ -80,6 +86,12 @@ pub struct MockPollRepository {
     pub update_poll_result: Arc<Mutex<Result<(), PollRepositoryError>>>,
 }
 
+impl Default for MockPollRepository {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockPollRepository {
     pub fn new() -> Self {
         Self {
@@ -118,6 +130,12 @@ impl Repository for MockPollRepository {
 pub struct MockChainClient {
     pub verify_personhood_result: Arc<Mutex<Result<bool, ChainError>>>,
     pub validate_signature_result: Arc<Mutex<Result<bool, ChainError>>>,
+}
+
+impl Default for MockChainClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockChainClient {

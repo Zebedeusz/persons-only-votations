@@ -104,7 +104,7 @@ impl VoteService {
         }
 
         let context_bytes = string_to_context(&poll.context)
-            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid poll context: {}", e)))?;
+            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid poll context: {e}")))?;
 
         let ring_root = sp_core::sr25519::Public::from_raw([1u8; 32]);
 
@@ -169,7 +169,7 @@ impl VoteService {
         });
 
         let message = serde_json::to_string(&vote_data).map_err(|e| {
-            VoteServiceError::InvalidData(format!("JSON serialization failed: {}", e))
+            VoteServiceError::InvalidData(format!("JSON serialization failed: {e}"))
         })?;
 
         Ok(message.as_bytes().to_vec())
