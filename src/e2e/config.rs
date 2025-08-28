@@ -37,7 +37,7 @@ impl E2eConfig {
         }
 
         let test_users = Self::load_test_users();
-        
+
         Self {
             people_chain_endpoint: std::env::var("E2E_PEOPLE_CHAIN_ENDPOINT")
                 .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string()),
@@ -62,10 +62,12 @@ impl E2eConfig {
     fn load_test_users() -> Option<TestUsers> {
         let config_path = std::env::var("E2E_TEST_USERS_CONFIG")
             .unwrap_or_else(|_| "src/e2e/test_users.json".to_string());
-        
+
         if !Path::new(&config_path).exists() {
             eprintln!("Test users config file not found at: {config_path}");
-            eprintln!("Copy src/e2e/test_users.json.example to src/e2e/test_users.json and fill in the credentials");
+            eprintln!(
+                "Copy src/e2e/test_users.json.example to src/e2e/test_users.json and fill in the credentials"
+            );
             return None;
         }
 
@@ -85,17 +87,11 @@ impl E2eConfig {
     }
 
     pub fn get_recognized_person(&self, index: usize) -> Option<&TestUser> {
-        self.test_users
-            .as_ref()?
-            .recognized_persons
-            .get(index)
+        self.test_users.as_ref()?.recognized_persons.get(index)
     }
 
     pub fn get_onboarding_user(&self, index: usize) -> Option<&TestUser> {
-        self.test_users
-            .as_ref()?
-            .onboarding_queue
-            .get(index)
+        self.test_users.as_ref()?.onboarding_queue.get(index)
     }
 }
 

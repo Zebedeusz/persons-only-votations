@@ -21,9 +21,7 @@ impl From<PollServiceError> for ApiError {
         match err {
             PollServiceError::InvalidData(msg) => ApiError::BadRequest(msg),
             PollServiceError::AuthorizationFailed(msg) => ApiError::Unauthorized(msg),
-            PollServiceError::ChainError(e) => {
-                ApiError::InternalError(format!("Chain error: {e}"))
-            }
+            PollServiceError::ChainError(e) => ApiError::InternalError(format!("Chain error: {e}")),
             PollServiceError::RepositoryError(e) => {
                 ApiError::InternalError(format!("Storage error: {e}"))
             }
@@ -44,11 +42,9 @@ impl PollHandler {
     }
 
     pub async fn create_poll(&self, json_body: &str) -> Result<String, ApiError> {
-        
         // Parse request
         let request: CreatePollRequest = serde_json::from_str(json_body)
             .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))?;
-
 
         // Call service
         let response = self.poll_service.create_poll(request).await?;
@@ -61,9 +57,7 @@ impl PollHandler {
         let poll = self.poll_service.get_poll(poll_id).await?;
 
         match poll {
-            Some(poll) => {
-                to_json_response(&poll)
-            }
+            Some(poll) => to_json_response(&poll),
             None => Err(ApiError::NotFound),
         }
     }

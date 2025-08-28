@@ -22,9 +22,7 @@ impl From<VoteServiceError> for ApiError {
             VoteServiceError::DuplicateVote => ApiError::BadRequest(
                 "Duplicate vote: voter has already voted on this poll".to_string(),
             ),
-            VoteServiceError::ChainError(e) => {
-                ApiError::InternalError(format!("Chain error: {e}"))
-            }
+            VoteServiceError::ChainError(e) => ApiError::InternalError(format!("Chain error: {e}")),
             VoteServiceError::VoteRepositoryError(e) => {
                 ApiError::InternalError(format!("Vote storage error: {e}"))
             }

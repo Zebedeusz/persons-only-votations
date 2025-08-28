@@ -45,7 +45,7 @@ impl PollService {
         self.validate_poll_data(&request.poll_data)?;
 
         let message = self.create_signature_message(&request)?;
-        
+
         let signature_valid = self
             .chain_client
             .validate_signature(
@@ -55,9 +55,11 @@ impl PollService {
             )
             .await?;
 
-
         if !signature_valid {
-            tracing::error!("Signature validation failed for member: {}", request.creator_member_hex);
+            tracing::error!(
+                "Signature validation failed for member: {}",
+                request.creator_member_hex
+            );
             return Err(PollServiceError::AuthorizationFailed(
                 "Invalid signature".to_string(),
             ));
@@ -68,9 +70,11 @@ impl PollService {
             .verify_personhood(&request.creator_member_hex, &request.creator_signature)
             .await?;
 
-
         if !person_verified {
-            tracing::error!("Personhood verification failed for member: {}", request.creator_member_hex);
+            tracing::error!(
+                "Personhood verification failed for member: {}",
+                request.creator_member_hex
+            );
             return Err(PollServiceError::AuthorizationFailed(
                 "Person not verified".to_string(),
             ));

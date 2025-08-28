@@ -1,6 +1,7 @@
 use super::crypto_helpers::{
     TestKeyPair, create_poll_signature_message, create_vote_signature_message,
 };
+use crate::crypto::contexts::{context_to_string, generate_poll_context};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -35,7 +36,9 @@ impl TestPoll {
         let message = create_poll_signature_message(&self.title, &self.description, ends_at);
 
         // Sign the message
-        let signature = creator_keypair.sign_message(&message).expect("Failed to sign message");
+        let signature = creator_keypair
+            .sign_message(&message)
+            .expect("Failed to sign message");
 
         serde_json::json!({
             "creator_member_hex": creator_keypair.member_hex,
@@ -126,12 +129,22 @@ impl TestHelpers {
         vote_type: &str,
         voter_keypair: &TestKeyPair,
     ) -> HashMap<&'static str, Value> {
+        // Generate the correct poll context
+        let context_bytes = generate_poll_context(poll_id);
+        let poll_context = context_to_string(&context_bytes);
+
         // Create signature message
-        let message =
-            create_vote_signature_message(poll_id, &voter_keypair.member_hex, vote_type);
+        let message = create_vote_signature_message(
+            poll_id,
+            &voter_keypair.member_hex,
+            vote_type,
+            &poll_context,
+        );
 
         // Sign the message
-        let signature = voter_keypair.sign_message(&message).expect("Failed to sign message");
+        let signature = voter_keypair
+            .sign_message(&message)
+            .expect("Failed to sign message");
 
         let mut vote_data = HashMap::new();
         vote_data.insert("poll_id", Value::Number(poll_id.into()));

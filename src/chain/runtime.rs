@@ -36,12 +36,6 @@ impl PersonPosition {
     }
 }
 
-#[derive(Clone, Debug, Decode, Encode, TypeInfo, PartialEq, Eq)]
-pub struct RingRecord {
-    pub root: sr25519::Public,
-    pub revision: u32,
-}
-
 // Runtime call enum - simplified
 #[derive(Clone, Debug, Decode, Encode, TypeInfo, PartialEq, Eq)]
 pub enum RuntimeCall {

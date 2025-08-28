@@ -69,16 +69,20 @@ async fn test_basic_poll_creation_and_retrieval() {
     };
 
     // Get a recognized test user for creating the poll
-    let creator_user = setup.config.get_recognized_person(0)
+    let creator_user = setup
+        .config
+        .get_recognized_person(0)
         .expect("Recognized user should be configured in test_users.json");
-    
+
     // Create keypair from test user data
-    let creator_keypair = TestKeyPair::from_secret_scalar(&creator_user.secret_scalar, &creator_user.member_hex)
-        .expect("Failed to create keypair from test user data");
+    let creator_keypair =
+        TestKeyPair::from_secret_scalar(&creator_user.secret_scalar, &creator_user.member_hex)
+            .expect("Failed to create keypair from test user data");
 
     // Create poll using the recognized test user
     let poll_json = test_poll.to_json_with_keypair(&creator_keypair);
-    let response = setup.http_client
+    let response = setup
+        .http_client
         .post(format!("{}/polls", setup.config.server_base_url))
         .header("Content-Type", "application/json")
         .json(&poll_json)
@@ -92,7 +96,9 @@ async fn test_basic_poll_creation_and_retrieval() {
         panic!("Failed to create poll: {status} - {error_text}");
     }
 
-    let response_body: serde_json::Value = response.json().await
+    let response_body: serde_json::Value = response
+        .json()
+        .await
         .expect("Failed to parse poll creation response");
     let poll_id = response_body["poll_id"]
         .as_u64()
@@ -115,7 +121,10 @@ async fn test_basic_poll_creation_and_retrieval() {
     // Verify poll has expected fields
     assert!(retrieved_poll["id"].is_number());
     assert!(retrieved_poll["creator_member_hex"].is_string());
-    assert_eq!(retrieved_poll["creator_member_hex"], creator_keypair.member_hex);
+    assert_eq!(
+        retrieved_poll["creator_member_hex"],
+        creator_keypair.member_hex
+    );
     assert!(retrieved_poll["created_at"].is_number());
     assert!(retrieved_poll["ends_at"].is_number());
 }
@@ -141,20 +150,27 @@ async fn test_poll_voting_without_identity_proof() {
     };
 
     // Get recognized test users
-    let creator_user = setup.config.get_recognized_person(0)
+    let creator_user = setup
+        .config
+        .get_recognized_person(0)
         .expect("Recognized creator user should be configured");
-    let voter_user = setup.config.get_recognized_person(1)
+    let voter_user = setup
+        .config
+        .get_recognized_person(1)
         .expect("Recognized voter user should be configured");
-    
+
     // Create keypairs from test user data
-    let creator_keypair = TestKeyPair::from_secret_scalar(&creator_user.secret_scalar, &creator_user.member_hex)
-        .expect("Failed to create creator keypair");
-    let voter_keypair = TestKeyPair::from_secret_scalar(&voter_user.secret_scalar, &voter_user.member_hex)
-        .expect("Failed to create voter keypair");
+    let creator_keypair =
+        TestKeyPair::from_secret_scalar(&creator_user.secret_scalar, &creator_user.member_hex)
+            .expect("Failed to create creator keypair");
+    let voter_keypair =
+        TestKeyPair::from_secret_scalar(&voter_user.secret_scalar, &voter_user.member_hex)
+            .expect("Failed to create voter keypair");
 
     // Create poll using recognized test user
     let poll_json = test_poll.to_json_with_keypair(&creator_keypair);
-    let response = setup.http_client
+    let response = setup
+        .http_client
         .post(format!("{}/polls", setup.config.server_base_url))
         .header("Content-Type", "application/json")
         .json(&poll_json)
@@ -162,8 +178,7 @@ async fn test_poll_voting_without_identity_proof() {
         .await
         .expect("Failed to create poll");
 
-    let response_body: serde_json::Value = response.json().await
-        .expect("Failed to parse response");
+    let response_body: serde_json::Value = response.json().await.expect("Failed to parse response");
     let poll_id = response_body["poll_id"]
         .as_u64()
         .expect("Poll ID not found")
@@ -208,9 +223,13 @@ async fn test_recognized_users_poll_creation_and_voting() {
         .expect("Server should be available");
 
     // Get test users from config
-    let user1 = setup.config.get_recognized_person(0)
+    let user1 = setup
+        .config
+        .get_recognized_person(0)
         .expect("Recognized user 1 should be configured in test_users.json");
-    let user2 = setup.config.get_recognized_person(1)
+    let user2 = setup
+        .config
+        .get_recognized_person(1)
         .expect("Recognized user 2 should be configured in test_users.json");
 
     // Create keypairs from configured test users
@@ -227,10 +246,14 @@ async fn test_recognized_users_poll_creation_and_voting() {
         required_identity_proof: true, // This requires recognized persons
     };
 
-    tracing::info!("Creating poll with recognized user 1 (member key: {})", creator_keypair.member_hex);
+    tracing::info!(
+        "Creating poll with recognized user 1 (member key: {})",
+        creator_keypair.member_hex
+    );
 
     let poll_json = test_poll.to_json_with_keypair(&creator_keypair);
-    let response = setup.http_client
+    let response = setup
+        .http_client
         .post(format!("{}/polls", setup.config.server_base_url))
         .header("Content-Type", "application/json")
         .json(&poll_json)
@@ -244,7 +267,9 @@ async fn test_recognized_users_poll_creation_and_voting() {
         panic!("Failed to create poll: {status} - {error_text}");
     }
 
-    let response_body: serde_json::Value = response.json().await
+    let response_body: serde_json::Value = response
+        .json()
+        .await
         .expect("Failed to parse poll creation response");
 
     let poll_id = response_body["poll_id"]
@@ -255,25 +280,28 @@ async fn test_recognized_users_poll_creation_and_voting() {
     tracing::info!("Created poll with ID: {}", poll_id);
 
     // Verify poll was created correctly
-    let retrieved_poll = TestHelpers::get_poll_via_api(
-        &setup.http_client, 
-        &setup.config.server_base_url, 
-        &poll_id
-    )
-    .await
-    .expect("Failed to retrieve created poll");
+    let retrieved_poll =
+        TestHelpers::get_poll_via_api(&setup.http_client, &setup.config.server_base_url, &poll_id)
+            .await
+            .expect("Failed to retrieve created poll");
 
     assert_eq!(retrieved_poll["name"], test_poll.title);
     assert_eq!(retrieved_poll["description"], test_poll.description);
     assert_eq!(retrieved_poll["is_active"], true);
-    assert_eq!(retrieved_poll["creator_member_hex"], creator_keypair.member_hex);
+    assert_eq!(
+        retrieved_poll["creator_member_hex"],
+        creator_keypair.member_hex
+    );
 
     tracing::info!("Poll verification passed");
 
     // Vote on the poll with recognized user 2
     let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-    
-    tracing::info!("Submitting vote with recognized user 2 (member key: {})", voter_keypair.member_hex);
+
+    tracing::info!(
+        "Submitting vote with recognized user 2 (member key: {})",
+        voter_keypair.member_hex
+    );
 
     let vote_data = TestHelpers::create_signed_vote_data(poll_id_num, "Yay", &voter_keypair);
 
@@ -289,38 +317,54 @@ async fn test_recognized_users_poll_creation_and_voting() {
     tracing::info!("Vote submitted successfully: {:?}", vote_response);
 
     // Verify vote was recorded by checking vote counts
-    let vote_counts_response = setup.http_client
-        .get(format!("{}/polls/{}/votes", setup.config.server_base_url, poll_id))
+    let vote_counts_response = setup
+        .http_client
+        .get(format!(
+            "{}/polls/{}/votes",
+            setup.config.server_base_url, poll_id
+        ))
         .send()
         .await
         .expect("Failed to get vote counts");
 
     if vote_counts_response.status().is_success() {
-        let vote_counts: serde_json::Value = vote_counts_response.json().await
+        let vote_counts: serde_json::Value = vote_counts_response
+            .json()
+            .await
             .expect("Failed to parse vote counts response");
-        
+
         tracing::info!("Vote counts: {:?}", vote_counts);
-        
+
         // Verify that at least one vote was recorded
         let yay_votes = vote_counts["yay_votes"].as_u64().unwrap_or(0);
         let nay_votes = vote_counts["nay_votes"].as_u64().unwrap_or(0);
         let total_votes = yay_votes + nay_votes;
-        
+
         assert!(total_votes > 0, "At least one vote should be recorded");
-        tracing::info!("Vote counting verification passed - total votes: {}", total_votes);
+        tracing::info!(
+            "Vote counting verification passed - total votes: {}",
+            total_votes
+        );
     } else {
         tracing::warn!("Vote counts endpoint not available, skipping vote count verification");
     }
 
     // Test voting with onboarding user (should fail)
     if let Some(onboarding_user) = setup.config.get_onboarding_user(0) {
-        tracing::info!("Testing vote rejection with onboarding user (member key: {})", onboarding_user.member_hex);
-        
-        let onboarding_keypair = TestKeyPair::from_secret_scalar(&onboarding_user.secret_scalar, &onboarding_user.member_hex)
-            .expect("Failed to create keypair for onboarding user");
-        
-        let onboarding_vote_data = TestHelpers::create_signed_vote_data(poll_id_num, "Nay", &onboarding_keypair);
-        
+        tracing::info!(
+            "Testing vote rejection with onboarding user (member key: {})",
+            onboarding_user.member_hex
+        );
+
+        let onboarding_keypair = TestKeyPair::from_secret_scalar(
+            &onboarding_user.secret_scalar,
+            &onboarding_user.member_hex,
+        )
+        .expect("Failed to create keypair for onboarding user");
+
+        let onboarding_vote_data =
+            TestHelpers::create_signed_vote_data(poll_id_num, "Nay", &onboarding_keypair);
+
         let onboarding_vote_response = TestHelpers::submit_vote_via_api(
             &setup.http_client,
             &setup.config.server_base_url,
@@ -328,12 +372,12 @@ async fn test_recognized_users_poll_creation_and_voting() {
             &onboarding_vote_data,
         )
         .await;
-        
+
         // This should fail for onboarding users
         match onboarding_vote_response {
             Ok(_) => {
                 panic!("Vote by onboarding user should have been rejected but was accepted");
-            },
+            }
             Err(e) => {
                 tracing::info!("Vote by onboarding user correctly rejected: {}", e);
             }
@@ -343,18 +387,17 @@ async fn test_recognized_users_poll_creation_and_voting() {
     }
 
     // Verify poll is still retrievable and shows updated information
-    let final_poll = TestHelpers::get_poll_via_api(
-        &setup.http_client, 
-        &setup.config.server_base_url, 
-        &poll_id
-    )
-    .await
-    .expect("Failed to retrieve poll after voting");
+    let final_poll =
+        TestHelpers::get_poll_via_api(&setup.http_client, &setup.config.server_base_url, &poll_id)
+            .await
+            .expect("Failed to retrieve poll after voting");
 
     assert_eq!(final_poll["name"], test_poll.title);
     assert_eq!(final_poll["is_active"], true);
 
-    tracing::info!("E2E test completed successfully: poll created by user 1, voted by user 2, onboarding user vote correctly rejected");
+    tracing::info!(
+        "E2E test completed successfully: poll created by user 1, voted by user 2, onboarding user vote correctly rejected"
+    );
 }
 
 #[tokio::test]

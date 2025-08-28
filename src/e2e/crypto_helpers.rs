@@ -15,13 +15,13 @@ impl TestKeyPair {
         let member = BandersnatchVrfVerifiable::member_from_secret(&secret);
         let member_hex = hex::encode(member.0);
 
-        Self {
-            member_hex,
-            secret,
-        }
+        Self { member_hex, secret }
     }
 
-    pub fn from_secret_scalar(_secret_scalar: &str, member_hex: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn from_secret_scalar(
+        _secret_scalar: &str,
+        member_hex: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let entropy = match member_hex {
             "5e465beb01dbafe160ce8216047f2155dd0569f058afd52dcea601025a8d161d" => [0u8; 32], // User 1
             "3f9828dfc4e8fdc12ed5f7e6f380b5d30ff328613e6d3e4a27e24ca3e64474b9" => [1u8; 32], // User 2
@@ -36,11 +36,11 @@ impl TestKeyPair {
                 entropy
             }
         };
-        
+
         let secret = BandersnatchVrfVerifiable::new_secret(entropy);
         let derived_member = BandersnatchVrfVerifiable::member_from_secret(&secret);
         let derived_hex = hex::encode(derived_member.0);
-        
+
         if derived_hex != member_hex {
             return Err(format!("Generated secret doesn't produce expected member key. Expected: {member_hex}, Got: {derived_hex}").into());
         }
@@ -51,7 +51,10 @@ impl TestKeyPair {
         })
     }
 
-    pub fn sign_message(&self, message: &[u8]) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn sign_message(
+        &self,
+        message: &[u8],
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let signature = BandersnatchVrfVerifiable::sign(&self.secret, message)
             .map_err(|_| "Failed to create signature")?;
         Ok(hex::encode(signature))
@@ -64,7 +67,7 @@ pub fn create_poll_signature_message(
     ends_at: i64,
 ) -> Vec<u8> {
     use crate::storage::models::poll::PollData;
-    
+
     let poll_data = PollData {
         name: poll_name.to_string(),
         description: poll_description.to_string(),
@@ -79,10 +82,18 @@ pub fn create_poll_signature_message(
 
 pub fn create_vote_signature_message(
     poll_id: u32,
-    voter_member_hex: &str,
+    _voter_member_hex: &str,
     vote_type: &str,
+    poll_context: &str,
 ) -> Vec<u8> {
-    format!("vote:{poll_id}:{voter_member_hex}:{vote_type}")
+    let vote_data = serde_json::json!({
+        "poll_id": poll_id,
+        "vote_type": vote_type,
+        "context": poll_context
+    });
+
+    serde_json::to_string(&vote_data)
+        .unwrap()
         .as_bytes()
         .to_vec()
 }

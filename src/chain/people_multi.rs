@@ -1,9 +1,12 @@
-use crate::chain::runtime::{IndividualityConfig, PersonRecord, PersonalId, RingRecord};
+use crate::chain::runtime::{IndividualityConfig, PersonRecord, PersonalId};
 use async_trait::async_trait;
 use sp_core::sr25519;
 use subxt::OnlineClient;
 use thiserror::Error;
-use verifiable::{GenerateVerifiable, ring_vrf_impl::{BandersnatchVrfVerifiable, EncodedPublicKey}};
+use verifiable::{
+    GenerateVerifiable,
+    ring_vrf_impl::{BandersnatchVrfVerifiable, EncodedPublicKey},
+};
 
 #[derive(Error, Debug, Clone)]
 pub enum ChainError {
@@ -207,12 +210,10 @@ impl PeopleMultiClient {
         }
     }
 
-    async fn get_ring_record(&self, ring_index: u16) -> Result<Option<RingRecord>> {
-        tracing::debug!("Getting ring record for ring index: {}", ring_index);
-        
+    async fn is_ring_active(&self, ring_index: u16) -> Result<bool> {
         // Mock client fallback for testing
         if self.endpoint == "mock" {
-            return self.get_ring_record_mock(ring_index).await;
+            return self.is_ring_active_mock(ring_index).await;
         }
 
         let client = self
@@ -228,31 +229,11 @@ impl PeopleMultiClient {
         match client.storage().at_latest().await {
             Ok(storage) => {
                 match storage.fetch(&storage_query).await {
-                    Ok(ring_root_opt) => {
-                        match ring_root_opt {
-                            Some(ring_root) => {
-                                tracing::debug!("Found ring root for ring {}: revision {}", ring_index, ring_root.revision);
-                                // The chain stores a 384-byte ring root commitment, but our RingRecord expects sr25519::Public (32 bytes)
-                                // For now, we'll create a mock sr25519::Public since we just need to verify the ring exists
-                                let mock_root = sr25519::Public::from_raw([1u8; 32]);
-                                let ring_record = RingRecord {
-                                    root: mock_root, 
-                                    revision: ring_root.revision,
-                                };
-                                Ok(Some(ring_record))
-                            }
-                            None => {
-                                tracing::debug!("No ring root found for ring {}", ring_index);
-                                Ok(None)
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to query ring root for ring {}: {}", ring_index, e);
-                        Err(ChainError::QueryFailed(format!(
-                            "Failed to query Root for ring {ring_index}: {e}"
-                        )))
-                    }
+                    Ok(Some(_)) => Ok(true), // Ring exists and is active
+                    Ok(None) => Ok(false),   // Ring not found or inactive
+                    Err(e) => Err(ChainError::QueryFailed(format!(
+                        "Failed to query ring root: {e}"
+                    ))),
                 }
             }
             Err(e) => Err(ChainError::QueryFailed(format!(
@@ -265,7 +246,6 @@ impl PeopleMultiClient {
 #[async_trait]
 impl ChainClient for PeopleMultiClient {
     async fn verify_personhood(&self, member_hex: &str, _signature: &str) -> Result<bool> {
-        
         // Mock client fallback for testing
         if self.endpoint == "mock" {
             tracing::debug!("Using mock client for personhood verification");
@@ -276,9 +256,7 @@ impl ChainClient for PeopleMultiClient {
 
         // 1. Get PersonalId from member key
         let personal_id = match self.get_personal_id_by_key(member_hex).await? {
-            Some(id) => {
-                id
-            },
+            Some(id) => id,
             None => {
                 return Ok(false); // Key not found in people pallet
             }
@@ -286,9 +264,7 @@ impl ChainClient for PeopleMultiClient {
 
         // 2. Get person record
         let person_record = match self.get_person_record(personal_id).await? {
-            Some(record) => {
-                record
-            },
+            Some(record) => record,
             None => {
                 return Ok(false); // Person record not found
             }
@@ -296,23 +272,16 @@ impl ChainClient for PeopleMultiClient {
 
         // 3. Check if person is included in a ring (not just onboarding)
         let ring_index = match person_record.position.ring_index() {
-            Some(index) => {
-                index
-            },
+            Some(index) => index,
             None => {
                 return Ok(false); // Person is still onboarding
             }
         };
 
         // 4. Verify the ring is active
-        let _ring_record = match self.get_ring_record(ring_index).await? {
-            Some(record) => {
-                record
-            },
-            None => {
-                return Ok(false); // Ring not found or inactive
-            }
-        };
+        if !self.is_ring_active(ring_index).await? {
+            return Ok(false); // Ring not found or inactive
+        }
 
         // If we get here, the person is verified and in an active ring
         Ok(true)
@@ -361,17 +330,15 @@ impl ChainClient for PeopleMultiClient {
         signature_array.copy_from_slice(&signature_bytes);
 
         // Verify the signature using verifiable crypto
-        let is_valid = BandersnatchVrfVerifiable::verify_signature(&signature_array, message, &encoded_member);
+        let is_valid =
+            BandersnatchVrfVerifiable::verify_signature(&signature_array, message, &encoded_member);
 
         Ok(is_valid)
     }
 }
 
 impl PeopleMultiClient {
-    async fn get_personal_id_by_key_mock(
-        &self,
-        member_hex: &str,
-    ) -> Result<Option<PersonalId>> {
+    async fn get_personal_id_by_key_mock(&self, member_hex: &str) -> Result<Option<PersonalId>> {
         // Parse the hex member key
         let member_bytes = hex::decode(member_hex)
             .map_err(|e| ChainError::InvalidPublicKey(format!("Invalid hex format: {e}")))?;
@@ -414,14 +381,9 @@ impl PeopleMultiClient {
         }
     }
 
-    async fn get_ring_record_mock(&self, ring_index: u16) -> Result<Option<RingRecord>> {
-        // Create a mock ring record
-        let mock_root = sr25519::Public::from_raw([1u8; 32]);
-        let ring_record = RingRecord {
-            root: mock_root,
-            revision: ring_index as u32,
-        };
-        Ok(Some(ring_record))
+    async fn is_ring_active_mock(&self, _ring_index: u16) -> Result<bool> {
+        // For mock mode, assume all rings are active
+        Ok(true)
     }
 
     async fn verify_personhood_mock(&self, member_hex: &str) -> Result<bool> {
@@ -433,7 +395,8 @@ impl PeopleMultiClient {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // For prototype: accept keys that look like hex (even length, valid hex chars)
-        if member_hex.len() != 64 { // 32 bytes * 2 hex chars per byte
+        if member_hex.len() != 64 {
+            // 32 bytes * 2 hex chars per byte
             return Ok(false);
         }
 
