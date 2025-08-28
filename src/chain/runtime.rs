@@ -36,6 +36,17 @@ impl PersonPosition {
     }
 }
 
+/// Ring root data structure matching the individuality pallet
+#[derive(Clone, Debug, Decode, Encode, TypeInfo, PartialEq, Eq)]
+pub struct RingRoot {
+    /// The ring root commitment for cryptographic verification
+    pub root: verifiable::ring_vrf_impl::MembersCommitment,
+    /// The revision index of the ring
+    pub revision: u32,
+    /// An intermediate value if the ring is not full
+    pub intermediate: verifiable::ring_vrf_impl::MembersSet,
+}
+
 // Runtime call enum - simplified
 #[derive(Clone, Debug, Decode, Encode, TypeInfo, PartialEq, Eq)]
 pub enum RuntimeCall {

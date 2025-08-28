@@ -72,11 +72,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn initialize_chain_client(
     config: &Config,
 ) -> Result<Arc<dyn ChainClient>, Box<dyn std::error::Error>> {
-    if config.mock_mode {
-        info!("Mock mode enabled - using mock chain client");
-        return Ok(Arc::new(PeopleMultiClient::new_mock()) as Arc<dyn ChainClient>);
-    }
-
     let chain_endpoint = config.people_chain_endpoint();
     info!("Connecting to People Chain at: {}", chain_endpoint);
 

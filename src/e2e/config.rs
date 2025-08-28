@@ -22,19 +22,12 @@ pub struct E2eConfig {
     pub server_base_url: String,
     pub test_timeout_seconds: u64,
     pub chain_connection_retries: u32,
-    pub mock_mode: bool,
     pub test_users: Option<TestUsers>,
 }
 
 impl E2eConfig {
     pub fn from_env() -> Self {
-        if std::env::var("MOCK_MODE").is_ok() {
-            if dotenvy::from_filename(".env.e2e.mock").is_err() {
-                let _ = dotenvy::from_filename(".env.e2e");
-            }
-        } else if dotenvy::from_filename(".env.e2e").is_err() {
-            let _ = dotenvy::from_filename(".env.e2e.mock");
-        }
+        let _ = dotenvy::from_filename(".env.e2e");
 
         let test_users = Self::load_test_users();
 
@@ -51,10 +44,6 @@ impl E2eConfig {
                 .unwrap_or_else(|_| "5".to_string())
                 .parse()
                 .unwrap_or(5),
-            mock_mode: std::env::var("MOCK_MODE")
-                .unwrap_or_else(|_| "true".to_string()) // Default to true for E2E tests
-                .parse()
-                .unwrap_or(true),
             test_users,
         }
     }
@@ -102,7 +91,6 @@ impl Default for E2eConfig {
             server_base_url: "http://127.0.0.1:3000".to_string(),
             test_timeout_seconds: 30,
             chain_connection_retries: 5,
-            mock_mode: true, // Default to mock mode for tests
             test_users: None,
         }
     }

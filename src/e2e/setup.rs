@@ -13,12 +13,7 @@ impl E2eTestSetup {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = E2eConfig::from_env();
 
-        let people_client = if config.mock_mode {
-            tracing::info!("Mock mode enabled - skipping people chain connection");
-            None
-        } else {
-            Some(Self::connect_to_people_chain(&config).await?)
-        };
+        let people_client = Some(Self::connect_to_people_chain(&config).await?);
 
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.test_timeout_seconds))
@@ -110,9 +105,5 @@ impl E2eTestSetup {
 
     pub fn people_client(&self) -> Option<&OnlineClient<PolkadotConfig>> {
         self.people_client.as_ref()
-    }
-
-    pub fn is_mock_mode(&self) -> bool {
-        self.config.mock_mode
     }
 }

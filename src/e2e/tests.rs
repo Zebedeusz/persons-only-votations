@@ -12,14 +12,9 @@ async fn test_people_chain_connection() {
         .await
         .expect("Failed to setup e2e test environment");
 
-    if setup.is_mock_mode() {
-        tracing::info!("Skipping people chain connection test in mock mode");
-        return;
-    }
-
     let people_client = setup
         .people_client()
-        .expect("People client should be available in non-mock mode");
+        .expect("People client should be available");
 
     // Basic chain connectivity test
     let chain_info = people_client
@@ -401,8 +396,7 @@ async fn test_recognized_users_poll_creation_and_voting() {
 }
 
 #[tokio::test]
-#[ignore = "Requires identity proof implementation"]
-async fn test_poll_voting_with_identity_proof() {
+async fn test_impersonation_attack_prevention() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let setup = E2eTestSetup::new()
@@ -414,54 +408,118 @@ async fn test_poll_voting_with_identity_proof() {
         .await
         .expect("Server should be available");
 
-    if setup.is_mock_mode() {
-        tracing::info!("Running identity proof test in mock mode");
-        // In mock mode, we can test the API flow with mock identity proofs
-        let test_poll = TestPoll {
-            title: "Identity Proof Test Poll".to_string(),
-            description: "Testing voting with mock identity proof".to_string(),
-            options: vec!["Yes".to_string(), "No".to_string()],
-            required_identity_proof: true,
-        };
+    // Get a legitimate recognized user whose identity we'll try to steal
+    let legitimate_user = setup
+        .config
+        .get_recognized_person(0)
+        .expect("Recognized user should be configured in test_users.json");
 
-        let poll_id = TestHelpers::create_poll_via_api(
-            &setup.http_client,
-            &setup.config.server_base_url,
-            &test_poll,
-        )
+    // Create the legitimate user's keypair (for comparison)
+    let legitimate_keypair = TestKeyPair::from_secret_scalar(
+        &legitimate_user.secret_scalar,
+        &legitimate_user.member_hex,
+    )
+    .expect("Failed to create legitimate keypair");
+
+    // Simulate malicious user: knows the public key but NOT the private key
+    // Generate a different private key but try to use the legitimate user's public key
+    let malicious_keypair = TestKeyPair::generate(); // This creates a different secret
+
+    // Create a "fake" keypair that attempts to impersonate the legitimate user
+    // by using their public key but with the wrong secret
+    let fake_impersonation_keypair = TestKeyPair {
+        member_hex: legitimate_user.member_hex.clone(), // Stolen public key
+        secret: malicious_keypair.secret.clone(), // Wrong secret (doesn't match the public key)
+    };
+
+    tracing::info!(
+        "Attempting impersonation attack: malicious user trying to use public key {} without knowing the private key",
+        legitimate_user.member_hex
+    );
+
+    // Test 1: Try to create a poll using the impersonated identity
+    let test_poll = TestPoll {
+        title: "Malicious Impersonation Poll".to_string(),
+        description: "This poll should fail to be created due to signature mismatch".to_string(),
+        options: vec!["Yes".to_string(), "No".to_string()],
+        required_identity_proof: false,
+    };
+
+    let poll_json = test_poll.to_json_with_keypair(&fake_impersonation_keypair);
+    let poll_response = setup
+        .http_client
+        .post(format!("{}/polls", setup.config.server_base_url))
+        .header("Content-Type", "application/json")
+        .json(&poll_json)
+        .send()
         .await
-        .expect("Failed to create poll");
+        .expect("Failed to send poll creation request");
 
-        // Submit a vote with proper signature
-        let voter_keypair = TestKeyPair::generate();
-        let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-        let vote_data = TestHelpers::create_signed_vote_data(poll_id_num, "Yay", &voter_keypair);
+    // This should fail due to signature verification failure
+    assert!(!poll_response.status().is_success());
 
-        let vote_response = TestHelpers::submit_vote_via_api(
-            &setup.http_client,
-            &setup.config.server_base_url,
-            &poll_id,
-            &vote_data,
-        )
-        .await;
+    // Test 2: Create a legitimate poll first, then try to vote with impersonated identity
+    let legitimate_poll_json = test_poll.to_json_with_keypair(&legitimate_keypair);
+    let legitimate_poll_response = setup
+        .http_client
+        .post(format!("{}/polls", setup.config.server_base_url))
+        .header("Content-Type", "application/json")
+        .json(&legitimate_poll_json)
+        .send()
+        .await
+        .expect("Failed to send legitimate poll creation request");
 
-        // In mock mode, this should succeed
-        match vote_response {
-            Ok(_) => tracing::info!("Mock identity proof voting test passed"),
-            Err(e) => tracing::warn!("Mock identity proof voting failed: {}", e),
-        }
-
-        return;
+    if !legitimate_poll_response.status().is_success() {
+        let status = legitimate_poll_response.status();
+        let error_text = legitimate_poll_response.text().await.unwrap_or_default();
+        panic!("Failed to create legitimate poll for impersonation test: {status} - {error_text}");
     }
 
-    // This test would require:
-    // 1. Setting up test accounts on people chain
-    // 2. Getting proper identity proofs
-    // 3. Creating poll with identity requirement
-    // 4. Submitting vote with valid proof
+    let poll_response_body: serde_json::Value = legitimate_poll_response
+        .json()
+        .await
+        .expect("Failed to parse legitimate poll creation response");
+    let poll_id = poll_response_body["poll_id"]
+        .as_u64()
+        .expect("Poll ID not found in response")
+        .to_string();
 
-    // For now, this is a placeholder showing the structure
-    // Implementation depends on people chain setup and identity system
+    tracing::info!("Created legitimate poll with ID: {}", poll_id);
 
-    tracing::info!("Identity proof voting test - implementation pending for real chain mode");
+    // Now try to vote using the impersonated identity
+    let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
+    let malicious_vote_data =
+        TestHelpers::create_signed_vote_data(poll_id_num, "Yay", &fake_impersonation_keypair);
+
+    tracing::info!(
+        "Attempting to vote with impersonated identity on poll {}",
+        poll_id
+    );
+
+    let vote_response = TestHelpers::submit_vote_via_api(
+        &setup.http_client,
+        &setup.config.server_base_url,
+        &poll_id,
+        &malicious_vote_data,
+    )
+    .await;
+
+    // This should fail due to signature verification
+    assert!(!vote_response.is_ok());
+
+    // Test 3: Verify that the legitimate user can still use their identity correctly
+    tracing::info!("Verifying legitimate user can still vote with their real keypair");
+
+    let legitimate_vote_data =
+        TestHelpers::create_signed_vote_data(poll_id_num, "Nay", &legitimate_keypair);
+
+    let legitimate_vote_response = TestHelpers::submit_vote_via_api(
+        &setup.http_client,
+        &setup.config.server_base_url,
+        &poll_id,
+        &legitimate_vote_data,
+    )
+    .await;
+
+    assert!(legitimate_vote_response.is_ok());
 }

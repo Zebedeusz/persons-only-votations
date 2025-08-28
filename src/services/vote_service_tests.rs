@@ -173,6 +173,37 @@ impl ChainClient for MockChainClient {
     ) -> Result<bool, ChainError> {
         self.validate_signature_result.lock().unwrap().clone()
     }
+
+    async fn get_ring_root(
+        &self,
+        _ring_index: u16,
+    ) -> Result<Option<crate::chain::runtime::RingRoot>, ChainError> {
+        // Create simple mock ring root for testing
+        use scale_codec::Decode;
+        use verifiable::ring_vrf_impl::{MembersCommitment, MembersSet};
+
+        // Create minimal valid structures for testing
+        let encoded_commitment = vec![0u8; 384]; // Correct size
+        let encoded_intermediate = vec![0u8; 432]; // Correct size
+
+        let members_commitment = match MembersCommitment::decode(&mut &encoded_commitment[..]) {
+            Ok(commitment) => commitment,
+            Err(_) => unsafe { std::mem::zeroed() }, // Only safe in test mode
+        };
+
+        let members_set = match MembersSet::decode(&mut &encoded_intermediate[..]) {
+            Ok(set) => set,
+            Err(_) => unsafe { std::mem::zeroed() }, // Only safe in test mode
+        };
+
+        let mock_ring_root = crate::chain::runtime::RingRoot {
+            root: members_commitment,
+            revision: 0,
+            intermediate: members_set,
+        };
+
+        Ok(Some(mock_ring_root))
+    }
 }
 
 #[cfg(test)]

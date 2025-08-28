@@ -23,9 +23,6 @@ pub struct Config {
 
     #[arg(long, env = "LOG_LEVEL", default_value = "info")]
     pub log_level: String,
-
-    #[arg(long, env = "MOCK_MODE", default_value = "false")]
-    pub mock_mode: bool,
 }
 
 impl Config {
@@ -61,7 +58,6 @@ impl Default for Config {
             people_chain_port: 9944, // Default Substrate WebSocket port
             people_chain_protocol: "ws".to_string(),
             log_level: "info".to_string(),
-            mock_mode: false,
         }
     }
 }
@@ -104,6 +100,5 @@ mod tests {
         assert_eq!(config.people_chain_protocol, "ws");
         assert_eq!(config.people_chain_endpoint(), "ws://127.0.0.1:9944");
         assert_eq!(config.log_level, "info");
-        assert!(!config.mock_mode);
     }
 }
