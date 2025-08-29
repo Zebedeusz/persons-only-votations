@@ -421,7 +421,7 @@ impl TestHelpers {
             .await?
             .fetch(&keys_query)
             .await?
-            .ok_or_else(|| format!("Ring keys not found for ring index {}", ring_index))?;
+            .ok_or_else(|| format!("Ring keys not found for ring index {ring_index}"))?;
 
         // Query RingKeysStatus to know how many keys are included
         let status_query = people_api::storage()
@@ -433,7 +433,7 @@ impl TestHelpers {
             .await?
             .fetch(&status_query)
             .await?
-            .ok_or_else(|| format!("Ring keys status not found for ring index {}", ring_index))?;
+            .ok_or_else(|| format!("Ring keys status not found for ring index {ring_index}"))?;
 
         // Convert BoundedVec to Vec and take only the included keys
         let included_keys: Vec<verifiable::ring_vrf_impl::EncodedPublicKey> = ring_keys

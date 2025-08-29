@@ -58,15 +58,19 @@ async fn test_recognized_users_poll_creation_and_voting() {
     let setup = setup_test_environment().await;
 
     let (creator_user, voter_user) = get_test_users(&setup);
-
     let test_poll = prepare_recognized_users_poll_data();
 
     let poll_id = create_timed_poll(&setup, &test_poll, &creator_user, 5).await;
     assert_poll_created_correctly(&setup, &poll_id, &test_poll, &creator_user).await;
 
-    let reveal_data = commit_vote_and_store_reveal_data(&setup, &poll_id, &voter_user, "Yay").await;
+    let nonce = crate::crypto::commitments::generate_nonce();
+    commit_vote(&setup, &poll_id, &voter_user, "Yay", &nonce).await;
+    let reveal_data = create_reveal_data(&poll_id, &voter_user, "Yay", &nonce);
+
     assert_vote_counts_hidden_during_voting(&setup, &poll_id).await;
+
     wait_for_poll_to_end_and_reveal(&setup, &poll_id, &reveal_data, 6).await;
+
     finalize_poll_and_assert_votes_counted(&setup, &poll_id).await;
 
     test_onboarding_user_vote_rejection(&setup, &poll_id).await;

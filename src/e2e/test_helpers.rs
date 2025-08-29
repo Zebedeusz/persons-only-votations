@@ -3,7 +3,6 @@ use super::{
     setup::E2eTestSetup,
     utils::{TestHelpers, TestPoll},
 };
-use crate::crypto::commitments::generate_nonce;
 use std::collections::HashMap;
 
 pub async fn setup_test_environment() -> E2eTestSetup {
@@ -216,26 +215,27 @@ pub async fn assert_vote_recorded(setup: &E2eTestSetup, poll_id: &str, expected_
     assert_eq!(updated_poll["name"], expected_poll.title);
 }
 
-pub async fn commit_vote_and_store_reveal_data(
+
+pub async fn commit_vote(
     setup: &E2eTestSetup,
     poll_id: &str,
     voter_keypair: &TestKeyPair,
     choice: &str,
-) -> HashMap<String, serde_json::Value> {
+    nonce: &[u8; 32],
+) {
     let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-    let nonce = generate_nonce();
 
     let vote_data = TestHelpers::create_vote_commit_data_with_real_ring_proof(
         poll_id_num,
         choice,
         voter_keypair,
-        &nonce,
+        nonce,
         setup,
     )
     .await
     .expect("Failed to create vote data with real ring proof");
 
-    let commit_response = TestHelpers::commit_vote_via_api(
+    let _commit_response = TestHelpers::commit_vote_via_api(
         &setup.http_client,
         &setup.config.server_base_url,
         poll_id,
@@ -243,8 +243,16 @@ pub async fn commit_vote_and_store_reveal_data(
     )
     .await
     .expect("Failed to commit vote");
+}
 
-    TestHelpers::create_vote_reveal_data(poll_id_num, choice, voter_keypair, &nonce)
+pub fn create_reveal_data(
+    poll_id: &str,
+    voter_keypair: &TestKeyPair,
+    choice: &str,
+    nonce: &[u8; 32],
+) -> HashMap<String, serde_json::Value> {
+    let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
+    TestHelpers::create_vote_reveal_data(poll_id_num, choice, voter_keypair, nonce)
 }
 
 pub async fn assert_vote_counts_hidden_during_voting(setup: &E2eTestSetup, poll_id: &str) {
@@ -264,15 +272,15 @@ pub async fn assert_vote_counts_hidden_during_voting(setup: &E2eTestSetup, poll_
             .await
             .expect("Failed to parse vote counts response");
 
-        let yay_votes_hidden = vote_counts_during_voting["yay_votes"].as_u64().unwrap_or(0);
-        let nay_votes_hidden = vote_counts_during_voting["nay_votes"].as_u64().unwrap_or(0);
+        let yay_votes = vote_counts_during_voting["yay_votes"].as_u64().unwrap_or(0);
+        let nay_votes = vote_counts_during_voting["nay_votes"].as_u64().unwrap_or(0);
 
         assert_eq!(
-            yay_votes_hidden, 0,
+            yay_votes, 0,
             "Vote counts should be hidden during voting period"
         );
         assert_eq!(
-            nay_votes_hidden, 0,
+            nay_votes, 0,
             "Vote counts should be hidden during voting period"
         );
     }
@@ -288,14 +296,14 @@ pub async fn wait_for_poll_to_end_and_reveal(
     tokio::time::sleep(tokio::time::Duration::from_secs(wait_seconds)).await;
 
     tracing::info!("Revealing vote now that poll has ended...");
-    let reveal_response = TestHelpers::reveal_vote_via_api(
+    let _reveal_response = TestHelpers::reveal_vote_via_api(
         &setup.http_client,
         &setup.config.server_base_url,
         poll_id,
         reveal_data,
     )
-    .await
-    .expect("Failed to reveal vote");
+        .await
+        .expect("Failed to reveal vote");
 }
 
 pub async fn finalize_poll_and_assert_votes_counted(setup: &E2eTestSetup, poll_id: &str) {
@@ -353,7 +361,7 @@ pub async fn test_onboarding_user_vote_rejection(setup: &E2eTestSetup, poll_id: 
             &onboarding_user.secret_scalar,
             &onboarding_user.member_hex,
         )
-        .expect("Failed to create keypair for onboarding user");
+            .expect("Failed to create keypair for onboarding user");
 
         let onboarding_vote_data_result =
             TestHelpers::create_signed_vote_data_with_real_ring_proof(
@@ -362,7 +370,7 @@ pub async fn test_onboarding_user_vote_rejection(setup: &E2eTestSetup, poll_id: 
                 &onboarding_keypair,
                 setup,
             )
-            .await;
+                .await;
 
         match onboarding_vote_data_result {
             Ok(onboarding_vote_data) => {
@@ -372,7 +380,7 @@ pub async fn test_onboarding_user_vote_rejection(setup: &E2eTestSetup, poll_id: 
                     poll_id,
                     &onboarding_vote_data,
                 )
-                .await;
+                    .await;
 
                 match onboarding_vote_response {
                     Ok(_) => {
@@ -410,7 +418,7 @@ pub fn get_legitimate_and_fake_keypairs(setup: &E2eTestSetup) -> (TestKeyPair, T
         &legitimate_user.secret_scalar,
         &legitimate_user.member_hex,
     )
-    .expect("Failed to create legitimate keypair");
+        .expect("Failed to create legitimate keypair");
 
     let malicious_keypair = TestKeyPair::generate();
     let fake_impersonation_keypair = TestKeyPair {
@@ -454,7 +462,7 @@ pub async fn attempt_malicious_vote(
         fake_keypair,
         setup,
     )
-    .await;
+        .await;
 
     assert!(
         malicious_vote_data_result.is_err(),
@@ -476,8 +484,8 @@ pub async fn verify_legitimate_user_can_vote(
         legitimate_keypair,
         setup,
     )
-    .await
-    .expect("Failed to create vote data with real ring proof");
+        .await
+        .expect("Failed to create vote data with real ring proof");
 
     let legitimate_vote_response = TestHelpers::commit_vote_via_api(
         &setup.http_client,
@@ -485,7 +493,7 @@ pub async fn verify_legitimate_user_can_vote(
         poll_id,
         &legitimate_vote_data,
     )
-    .await;
+        .await;
 
     assert!(
         legitimate_vote_response.is_ok(),
