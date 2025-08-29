@@ -43,6 +43,7 @@ pub trait ChainClient: Send + Sync {
         &self,
         ring_index: u16,
     ) -> Result<Option<crate::chain::runtime::RingRoot>>;
+    async fn get_person_ring_index(&self, member_hex: &str) -> Result<Option<u16>>;
 }
 
 #[derive(Debug)]
@@ -91,7 +92,6 @@ impl PeopleMultiClient {
     }
 
     async fn get_personal_id_by_key(&self, member_hex: &str) -> Result<Option<PersonalId>> {
-        // Parse the hex member key
         let member_bytes = hex::decode(member_hex)
             .map_err(|e| ChainError::InvalidPublicKey(format!("Invalid hex format: {e}")))?;
 
@@ -101,9 +101,6 @@ impl PeopleMultiClient {
             ));
         }
 
-        let client = &self.client;
-
-        // Create EncodedPublicKey from the member bytes
         use crate::chain::subxt_generated_people_apis::api::runtime_types::verifiable::ring_vrf_impl::EncodedPublicKey as ChainEncodedPublicKey;
         let mut key_array = [0u8; 32];
         key_array.copy_from_slice(&member_bytes);
@@ -113,92 +110,76 @@ impl PeopleMultiClient {
             .people()
             .keys(&encoded_key);
 
-        match client.storage().at_latest().await {
-            Ok(storage) => match storage.fetch(&storage_query).await {
-                Ok(personal_id_opt) => Ok(personal_id_opt),
-                Err(e) => Err(ChainError::QueryFailed(format!(
-                    "Failed to query Keys: {e}"
-                ))),
-            },
-            Err(e) => Err(ChainError::QueryFailed(format!(
-                "Failed to get storage: {e}"
-            ))),
-        }
+        let storage = self
+            .client
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ChainError::QueryFailed(format!("Failed to get storage: {e}")))?;
+        storage
+            .fetch(&storage_query)
+            .await
+            .map_err(|e| ChainError::QueryFailed(format!("Failed to query Keys: {e}")))
     }
 
     async fn get_person_record(
         &self,
         personal_id: PersonalId,
     ) -> Result<Option<PersonRecord<::subxt::ext::subxt_core::utils::AccountId32>>> {
-        let client = &self.client;
-
-        // Query People storage map
         let storage_query = crate::chain::subxt_generated_people_apis::api::storage()
             .people()
             .people(personal_id);
 
-        match client.storage().at_latest().await {
-            Ok(storage) => {
-                match storage.fetch(&storage_query).await {
-                    Ok(person_record_opt) => {
-                        match person_record_opt {
-                            Some(generated_record) => {
-                                // Convert from generated types to our types
-                                let person_record = PersonRecord {
-                                    key: sr25519::Public::from_raw({
-                                        let mut key_bytes = [0u8; 32];
-                                        if generated_record.key.0.len() >= 32 {
-                                            key_bytes.copy_from_slice(&generated_record.key.0[0..32]);
-                                        }
-                                        key_bytes
-                                    }),
-                                    account: generated_record.account,
-                                    position: match generated_record.position {
-                                        crate::chain::subxt_generated_people_apis::api::runtime_types::pallet_people_multi::types::RingPosition::Onboarding { .. } => 
-                                            crate::chain::runtime::PersonPosition::Onboarding,
-                                        crate::chain::subxt_generated_people_apis::api::runtime_types::pallet_people_multi::types::RingPosition::Included { ring_index, .. } => 
-                                            crate::chain::runtime::PersonPosition::Included(ring_index as u16),
-                                        _ => crate::chain::runtime::PersonPosition::Onboarding, // Handle other variants
-                                    },
-                                };
-                                Ok(Some(person_record))
-                            }
-                            None => Ok(None),
-                        }
-                    }
-                    Err(e) => Err(ChainError::QueryFailed(format!(
-                        "Failed to query People: {e}"
-                    ))),
-                }
+        let storage = self
+            .client
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ChainError::QueryFailed(format!("Failed to get storage: {e}")))?;
+
+        let generated_record = storage
+            .fetch(&storage_query)
+            .await
+            .map_err(|e| ChainError::QueryFailed(format!("Failed to query People: {e}")))?;
+
+        Ok(generated_record.map(|record| {
+            let mut key_bytes = [0u8; 32];
+            if record.key.0.len() >= 32 {
+                key_bytes.copy_from_slice(&record.key.0[0..32]);
             }
-            Err(e) => Err(ChainError::QueryFailed(format!(
-                "Failed to get storage: {e}"
-            ))),
-        }
+            
+            PersonRecord {
+                key: sr25519::Public::from_raw(key_bytes),
+                account: record.account,
+                position: match record.position {
+                    crate::chain::subxt_generated_people_apis::api::runtime_types::pallet_people_multi::types::RingPosition::Onboarding { .. } => 
+                        crate::chain::runtime::PersonPosition::Onboarding,
+                    crate::chain::subxt_generated_people_apis::api::runtime_types::pallet_people_multi::types::RingPosition::Included { ring_index, .. } => 
+                        crate::chain::runtime::PersonPosition::Included(ring_index as u16),
+                    _ => crate::chain::runtime::PersonPosition::Onboarding,
+                },
+            }
+        }))
     }
 
     async fn is_ring_active(&self, ring_index: u16) -> Result<bool> {
-        let client = &self.client;
-
-        // Query the Root storage map for the specific ring
         let storage_query = crate::chain::subxt_generated_people_apis::api::storage()
             .people()
             .root(ring_index as u32);
 
-        match client.storage().at_latest().await {
-            Ok(storage) => {
-                match storage.fetch(&storage_query).await {
-                    Ok(Some(_)) => Ok(true), // Ring exists and is active
-                    Ok(None) => Ok(false),   // Ring not found or inactive
-                    Err(e) => Err(ChainError::QueryFailed(format!(
-                        "Failed to query ring root: {e}"
-                    ))),
-                }
-            }
-            Err(e) => Err(ChainError::QueryFailed(format!(
-                "Failed to get storage: {e}"
-            ))),
-        }
+        let storage = self
+            .client
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ChainError::QueryFailed(format!("Failed to get storage: {e}")))?;
+
+        let result = storage
+            .fetch(&storage_query)
+            .await
+            .map_err(|e| ChainError::QueryFailed(format!("Failed to query ring root: {e}")))?;
+
+        Ok(result.is_some())
     }
 }
 
@@ -207,7 +188,6 @@ impl ChainClient for PeopleMultiClient {
     async fn verify_personhood(&self, member_hex: &str, _signature: &str) -> Result<bool> {
         tracing::debug!("Using real chain client for personhood verification");
 
-        // 1. Get PersonalId from member key
         let personal_id = match self.get_personal_id_by_key(member_hex).await? {
             Some(id) => id,
             None => {
@@ -215,7 +195,6 @@ impl ChainClient for PeopleMultiClient {
             }
         };
 
-        // 2. Get person record
         let person_record = match self.get_person_record(personal_id).await? {
             Some(record) => record,
             None => {
@@ -223,7 +202,6 @@ impl ChainClient for PeopleMultiClient {
             }
         };
 
-        // 3. Check if person is included in a ring (not just onboarding)
         let ring_index = match person_record.position.ring_index() {
             Some(index) => index,
             None => {
@@ -231,7 +209,6 @@ impl ChainClient for PeopleMultiClient {
             }
         };
 
-        // 4. Verify the ring is active
         if !self.is_ring_active(ring_index).await? {
             return Ok(false);
         }
@@ -239,58 +216,51 @@ impl ChainClient for PeopleMultiClient {
         Ok(true)
     }
 
-    /// Get the ring root for a specific ring index
-    /// This is needed for ring proof validation
     async fn get_ring_root(
         &self,
         ring_index: u16,
     ) -> Result<Option<crate::chain::runtime::RingRoot>> {
-        let client = &self.client;
-
-        // Query the Root storage map for the specific ring
         let storage_query = crate::chain::subxt_generated_people_apis::api::storage()
             .people()
             .root(ring_index as u32);
 
-        match client.storage().at_latest().await {
-            Ok(storage) => {
-                match storage.fetch(&storage_query).await {
-                    Ok(Some(ring_root)) => {
-                        use scale_codec::Decode;
+        let storage = self
+            .client
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ChainError::QueryFailed(format!("Failed to get storage: {e}")))?;
 
-                        // Convert from generated types to our types
-                        let members_commitment =
-                            verifiable::ring_vrf_impl::MembersCommitment::decode(
-                                &mut &ring_root.root[..],
-                            )
-                            .map_err(|e| {
-                                ChainError::DecodingFailed(format!(
-                                    "Failed to decode members commitment: {e}"
-                                ))
-                            })?;
-                        let members_set = verifiable::ring_vrf_impl::MembersSet::decode(
-                            &mut &ring_root.intermediate[..],
-                        )
+        let ring_root = storage
+            .fetch(&storage_query)
+            .await
+            .map_err(|e| ChainError::QueryFailed(format!("Failed to query ring root: {e}")))?;
+
+        match ring_root {
+            Some(root) => {
+                use scale_codec::Decode;
+
+                let members_commitment =
+                    verifiable::ring_vrf_impl::MembersCommitment::decode(&mut &root.root[..])
+                        .map_err(|e| {
+                            ChainError::DecodingFailed(format!(
+                                "Failed to decode members commitment: {e}"
+                            ))
+                        })?;
+
+                let members_set =
+                    verifiable::ring_vrf_impl::MembersSet::decode(&mut &root.intermediate[..])
                         .map_err(|e| {
                             ChainError::DecodingFailed(format!("Failed to decode members set: {e}"))
                         })?;
 
-                        let converted_root = crate::chain::runtime::RingRoot {
-                            root: members_commitment,
-                            revision: ring_root.revision,
-                            intermediate: members_set,
-                        };
-                        Ok(Some(converted_root))
-                    }
-                    Ok(None) => Ok(None), // Ring not found
-                    Err(e) => Err(ChainError::QueryFailed(format!(
-                        "Failed to query ring root: {e}"
-                    ))),
-                }
+                Ok(Some(crate::chain::runtime::RingRoot {
+                    root: members_commitment,
+                    revision: root.revision,
+                    intermediate: members_set,
+                }))
             }
-            Err(e) => Err(ChainError::QueryFailed(format!(
-                "Failed to get storage: {e}"
-            ))),
+            None => Ok(None),
         }
     }
 
@@ -300,7 +270,6 @@ impl ChainClient for PeopleMultiClient {
         signature: &str,
         message: &[u8],
     ) -> Result<bool> {
-        // Parse the member key
         let member_bytes = hex::decode(member_hex)
             .map_err(|e| ChainError::InvalidSignature(format!("Invalid member key hex: {e}")))?;
 
@@ -310,16 +279,13 @@ impl ChainClient for PeopleMultiClient {
             ));
         }
 
-        // Create EncodedPublicKey from member bytes
         let mut key_array = [0u8; 32];
         key_array.copy_from_slice(&member_bytes);
         let encoded_member = EncodedPublicKey(key_array);
 
-        // Parse the signature
         let signature_bytes = hex::decode(signature)
             .map_err(|e| ChainError::InvalidSignature(format!("Invalid signature hex: {e}")))?;
 
-        // Verifiable crypto signatures are 96 bytes (PLAIN_VRF_SIGNATURE_SIZE)
         if signature_bytes.len() != 96 {
             return Err(ChainError::InvalidSignature(
                 "Verifiable signature must be 96 bytes".to_string(),
@@ -329,10 +295,26 @@ impl ChainClient for PeopleMultiClient {
         let mut signature_array = [0u8; 96];
         signature_array.copy_from_slice(&signature_bytes);
 
-        // Verify the signature using verifiable crypto
         let is_valid =
             BandersnatchVrfVerifiable::verify_signature(&signature_array, message, &encoded_member);
 
         Ok(is_valid)
+    }
+
+    async fn get_person_ring_index(&self, member_hex: &str) -> Result<Option<u16>> {
+        // Get the personal ID first
+        let personal_id = match self.get_personal_id_by_key(member_hex).await? {
+            Some(id) => id,
+            None => return Ok(None), // Person not found
+        };
+
+        // Get the person record
+        let person_record = match self.get_person_record(personal_id).await? {
+            Some(record) => record,
+            None => return Ok(None), // Record not found
+        };
+
+        // Extract ring index from position
+        Ok(person_record.position.ring_index())
     }
 }

@@ -59,6 +59,31 @@ impl TestKeyPair {
             .map_err(|_| "Failed to create signature")?;
         Ok(hex::encode(signature))
     }
+
+    /// Generate a ring proof for the given ring members, context, and message
+    pub fn generate_ring_proof<I>(
+        &self,
+        ring_members: I,
+        context: &[u8],
+        message: &[u8],
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
+    where
+        I: Iterator<Item = verifiable::ring_vrf_impl::EncodedPublicKey> + Clone,
+    {
+        // First get the public member from the secret
+        let member = BandersnatchVrfVerifiable::member_from_secret(&self.secret);
+
+        // Create the commitment using the open method
+        let commitment = BandersnatchVrfVerifiable::open(&member, ring_members.clone())
+            .map_err(|_| "Failed to create ring commitment")?;
+
+        // Generate the ring proof using the create method
+        let (proof, _vrf_output) =
+            BandersnatchVrfVerifiable::create(commitment, &self.secret, context, message)
+                .map_err(|_| "Failed to generate ring proof")?;
+
+        Ok(hex::encode(proof))
+    }
 }
 
 pub fn create_poll_signature_message(

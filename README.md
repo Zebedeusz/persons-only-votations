@@ -2,13 +2,13 @@
 
 ## Left To Do
 - make voting more private (ZK?) - so as not to reveal one's vote
-- E2E tests (a set of recognized people on-chain necessary),
 - README update,
 - cleanup - retain only what's necessary,
 - code simplification.
 
 ## Possible Evolutions of this project
 - public and private polls
+- decentralize it - put it on chain (execution, storage)
 
 ## Quick Start
 

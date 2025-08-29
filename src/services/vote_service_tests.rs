@@ -178,31 +178,13 @@ impl ChainClient for MockChainClient {
         &self,
         _ring_index: u16,
     ) -> Result<Option<crate::chain::runtime::RingRoot>, ChainError> {
-        // Create simple mock ring root for testing
-        use scale_codec::Decode;
-        use verifiable::ring_vrf_impl::{MembersCommitment, MembersSet};
+        use crate::crypto::test_helpers::create_mock_ring_root;
+        Ok(Some(create_mock_ring_root()))
+    }
 
-        // Create minimal valid structures for testing
-        let encoded_commitment = vec![0u8; 384]; // Correct size
-        let encoded_intermediate = vec![0u8; 432]; // Correct size
-
-        let members_commitment = match MembersCommitment::decode(&mut &encoded_commitment[..]) {
-            Ok(commitment) => commitment,
-            Err(_) => unsafe { std::mem::zeroed() }, // Only safe in test mode
-        };
-
-        let members_set = match MembersSet::decode(&mut &encoded_intermediate[..]) {
-            Ok(set) => set,
-            Err(_) => unsafe { std::mem::zeroed() }, // Only safe in test mode
-        };
-
-        let mock_ring_root = crate::chain::runtime::RingRoot {
-            root: members_commitment,
-            revision: 0,
-            intermediate: members_set,
-        };
-
-        Ok(Some(mock_ring_root))
+    async fn get_person_ring_index(&self, _member_hex: &str) -> Result<Option<u16>, ChainError> {
+        // For testing, return ring index 0 for verified persons
+        Ok(Some(0))
     }
 }
 

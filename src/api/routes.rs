@@ -30,6 +30,10 @@ impl IntoResponse for ApiError {
     }
 }
 
+fn payload_to_string(payload: &Value) -> Result<String, ApiError> {
+    serde_json::to_string(payload).map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))
+}
+
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_check))
@@ -53,9 +57,7 @@ async fn create_poll(
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let handler = PollHandler::new(state.poll_service.clone());
-    let json_body = serde_json::to_string(&payload)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))?;
-
+    let json_body = payload_to_string(&payload)?;
     let response = handler.create_poll(&json_body).await?;
     Ok((StatusCode::CREATED, response))
 }
@@ -66,9 +68,7 @@ async fn cast_vote(
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let handler = VoteHandler::new(state.vote_service.clone());
-    let json_body = serde_json::to_string(&payload)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))?;
-
+    let json_body = payload_to_string(&payload)?;
     let response = handler.cast_vote(&poll_id, &json_body).await?;
     Ok((StatusCode::CREATED, response))
 }

@@ -76,7 +76,7 @@ impl PollHandler {
 }
 
 // JSON serialization helper
-fn to_json_response<T: serde::Serialize>(data: &T) -> Result<String, ApiError> {
+pub fn to_json_response<T: serde::Serialize>(data: &T) -> Result<String, ApiError> {
     serde_json::to_string(data)
         .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {e}")))
 }
@@ -118,7 +118,7 @@ mod tests {
 
         // Also test that a BadRequest error is created from JSON error
         let json_error = result.unwrap_err();
-        let api_error = ApiError::BadRequest(format!("Invalid JSON: {}", json_error));
+        let api_error = ApiError::BadRequest(format!("Invalid JSON: {json_error}"));
         assert!(matches!(api_error, ApiError::BadRequest(_)));
     }
 }

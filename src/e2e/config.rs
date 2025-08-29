@@ -53,8 +53,8 @@ impl E2eConfig {
             .unwrap_or_else(|_| "src/e2e/test_users.json".to_string());
 
         if !Path::new(&config_path).exists() {
-            eprintln!("Test users config file not found at: {config_path}");
-            eprintln!(
+            tracing::warn!("Test users config file not found at: {config_path}");
+            tracing::warn!(
                 "Copy src/e2e/test_users.json.example to src/e2e/test_users.json and fill in the credentials"
             );
             return None;
@@ -64,12 +64,12 @@ impl E2eConfig {
             Ok(content) => match serde_json::from_str::<TestUsers>(&content) {
                 Ok(users) => Some(users),
                 Err(e) => {
-                    eprintln!("Failed to parse test users config: {e}");
+                    tracing::error!("Failed to parse test users config: {e}");
                     None
                 }
             },
             Err(e) => {
-                eprintln!("Failed to read test users config file: {e}");
+                tracing::error!("Failed to read test users config file: {e}");
                 None
             }
         }

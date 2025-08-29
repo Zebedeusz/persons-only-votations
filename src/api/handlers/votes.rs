@@ -1,10 +1,4 @@
-use super::polls::ApiError;
-
-// JSON serialization helper
-fn to_json_response<T: serde::Serialize>(data: &T) -> Result<String, ApiError> {
-    serde_json::to_string(data)
-        .map_err(|e| ApiError::InternalError(format!("JSON serialization failed: {e}")))
-}
+use super::polls::{ApiError, to_json_response};
 use crate::services::vote_service::{VoteService, VoteServiceError};
 use crate::storage::models::vote::CastVoteRequest;
 use serde_json;

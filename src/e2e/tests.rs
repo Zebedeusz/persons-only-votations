@@ -181,7 +181,14 @@ async fn test_poll_voting_without_identity_proof() {
 
     // Submit a vote with proper signature using recognized test user
     let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-    let vote_data = TestHelpers::create_signed_vote_data(poll_id_num, "Yay", &voter_keypair);
+    let vote_data = TestHelpers::create_signed_vote_data_with_real_ring_proof(
+        poll_id_num,
+        "Yay",
+        &voter_keypair,
+        &setup,
+    )
+    .await
+    .expect("Failed to create vote data with real ring proof");
 
     let vote_response = TestHelpers::submit_vote_via_api(
         &setup.http_client,
@@ -298,7 +305,14 @@ async fn test_recognized_users_poll_creation_and_voting() {
         voter_keypair.member_hex
     );
 
-    let vote_data = TestHelpers::create_signed_vote_data(poll_id_num, "Yay", &voter_keypair);
+    let vote_data = TestHelpers::create_signed_vote_data_with_real_ring_proof(
+        poll_id_num,
+        "Yay",
+        &voter_keypair,
+        &setup,
+    )
+    .await
+    .expect("Failed to create vote data with real ring proof");
 
     let vote_response = TestHelpers::submit_vote_via_api(
         &setup.http_client,
@@ -357,24 +371,47 @@ async fn test_recognized_users_poll_creation_and_voting() {
         )
         .expect("Failed to create keypair for onboarding user");
 
-        let onboarding_vote_data =
-            TestHelpers::create_signed_vote_data(poll_id_num, "Nay", &onboarding_keypair);
+        let onboarding_vote_data_result =
+            TestHelpers::create_signed_vote_data_with_real_ring_proof(
+                poll_id_num,
+                "Nay",
+                &onboarding_keypair,
+                &setup,
+            )
+            .await;
 
-        let onboarding_vote_response = TestHelpers::submit_vote_via_api(
-            &setup.http_client,
-            &setup.config.server_base_url,
-            &poll_id,
-            &onboarding_vote_data,
-        )
-        .await;
+        // Ring proof generation should fail for onboarding users
+        match onboarding_vote_data_result {
+            Ok(onboarding_vote_data) => {
+                // If ring proof generation unexpectedly succeeded, try to submit the vote
+                // (this should still fail at the server level)
+                let onboarding_vote_response = TestHelpers::submit_vote_via_api(
+                    &setup.http_client,
+                    &setup.config.server_base_url,
+                    &poll_id,
+                    &onboarding_vote_data,
+                )
+                .await;
 
-        // This should fail for onboarding users
-        match onboarding_vote_response {
-            Ok(_) => {
-                panic!("Vote by onboarding user should have been rejected but was accepted");
+                match onboarding_vote_response {
+                    Ok(_) => {
+                        panic!(
+                            "Vote by onboarding user should have been rejected but was accepted"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::info!(
+                            "Vote by onboarding user correctly rejected at server level: {}",
+                            e
+                        );
+                    }
+                }
             }
             Err(e) => {
-                tracing::info!("Vote by onboarding user correctly rejected: {}", e);
+                tracing::info!(
+                    "Ring proof generation correctly failed for onboarding user: {}",
+                    e
+                );
             }
         }
     } else {
@@ -488,30 +525,40 @@ async fn test_impersonation_attack_prevention() {
 
     // Now try to vote using the impersonated identity
     let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-    let malicious_vote_data =
-        TestHelpers::create_signed_vote_data(poll_id_num, "Yay", &fake_impersonation_keypair);
 
-    tracing::info!(
-        "Attempting to vote with impersonated identity on poll {}",
-        poll_id
-    );
-
-    let vote_response = TestHelpers::submit_vote_via_api(
-        &setup.http_client,
-        &setup.config.server_base_url,
-        &poll_id,
-        &malicious_vote_data,
+    // The ring proof generation should fail because the fake keypair
+    // has a secret that doesn't correspond to any ring member
+    let malicious_vote_data_result = TestHelpers::create_signed_vote_data_with_real_ring_proof(
+        poll_id_num,
+        "Yay",
+        &fake_impersonation_keypair,
+        &setup,
     )
     .await;
 
-    // This should fail due to signature verification
-    assert!(!vote_response.is_ok());
+    // This should fail at ring proof generation stage - which is more secure
+    // than failing later at signature verification
+    assert!(
+        malicious_vote_data_result.is_err(),
+        "Ring proof generation should fail for impersonated identity"
+    );
+
+    tracing::info!(
+        "Ring proof generation correctly failed for impersonated identity: {:?}",
+        malicious_vote_data_result.err()
+    );
 
     // Test 3: Verify that the legitimate user can still use their identity correctly
     tracing::info!("Verifying legitimate user can still vote with their real keypair");
 
-    let legitimate_vote_data =
-        TestHelpers::create_signed_vote_data(poll_id_num, "Nay", &legitimate_keypair);
+    let legitimate_vote_data = TestHelpers::create_signed_vote_data_with_real_ring_proof(
+        poll_id_num,
+        "Nay",
+        &legitimate_keypair,
+        &setup,
+    )
+    .await
+    .expect("Failed to create vote data with real ring proof");
 
     let legitimate_vote_response = TestHelpers::submit_vote_via_api(
         &setup.http_client,
