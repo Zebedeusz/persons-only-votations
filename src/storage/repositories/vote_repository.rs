@@ -17,6 +17,7 @@ pub type Result<T> = std::result::Result<T, VoteRepositoryError>;
 
 pub trait VoteRepository: Send + Sync {
     fn create_vote(&self, vote: Vote) -> Result<()>;
+    fn update_vote(&self, vote: Vote) -> Result<()>;
     fn get_votes_by_poll(&self, poll_id: u32) -> Result<Vec<Vote>>;
     fn get_vote_by_poll_and_voter(
         &self,
@@ -89,6 +90,25 @@ impl VoteRepository for InMemoryVoteRepository {
         Ok(())
     }
 
+    fn update_vote(&self, updated_vote: Vote) -> Result<()> {
+        let mut votes = self
+            .votes
+            .lock()
+            .map_err(|_| VoteRepositoryError::LockError)?;
+
+        // Find and update the vote by poll_id and voter_member_hex
+        let vote_index = votes
+            .iter()
+            .position(|vote| {
+                vote.poll_id == updated_vote.poll_id
+                    && vote.voter_member_hex == updated_vote.voter_member_hex
+            })
+            .ok_or(VoteRepositoryError::VoteNotFound(updated_vote.poll_id))?;
+
+        votes[vote_index] = updated_vote;
+        Ok(())
+    }
+
     fn get_votes_by_poll(&self, poll_id: u32) -> Result<Vec<Vote>> {
         let votes = self
             .votes
@@ -143,12 +163,24 @@ impl VoteRepository for InMemoryVoteRepository {
 
         let yay_count = poll_votes
             .iter()
-            .filter(|vote| vote.vote_type == VoteType::Yay)
+            .filter(|vote| {
+                if let Some(vote_type) = &vote.vote_type {
+                    *vote_type == VoteType::Yay
+                } else {
+                    false
+                }
+            })
             .count() as u32;
 
         let nay_count = poll_votes
             .iter()
-            .filter(|vote| vote.vote_type == VoteType::Nay)
+            .filter(|vote| {
+                if let Some(vote_type) = &vote.vote_type {
+                    *vote_type == VoteType::Nay
+                } else {
+                    false
+                }
+            })
             .count() as u32;
 
         Ok((yay_count, nay_count))

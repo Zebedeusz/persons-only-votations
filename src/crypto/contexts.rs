@@ -1,3 +1,4 @@
+use super::{bytes32_to_hex, hex_to_bytes32};
 use blake2::{Blake2b512, Digest};
 
 pub fn generate_poll_context(poll_id: u32) -> [u8; 32] {
@@ -12,17 +13,11 @@ pub fn generate_poll_context(poll_id: u32) -> [u8; 32] {
 }
 
 pub fn context_to_string(context: &[u8; 32]) -> String {
-    hex::encode(context)
+    bytes32_to_hex(context)
 }
 
 pub fn string_to_context(hex_str: &str) -> Result<[u8; 32], hex::FromHexError> {
-    let bytes = hex::decode(hex_str)?;
-    if bytes.len() != 32 {
-        return Err(hex::FromHexError::InvalidStringLength);
-    }
-    let mut context = [0u8; 32];
-    context.copy_from_slice(&bytes);
-    Ok(context)
+    hex_to_bytes32(hex_str)
 }
 
 #[cfg(test)]

@@ -1,7 +1,6 @@
 use super::polls::{ApiError, to_json_response};
 use crate::services::vote_service::{VoteService, VoteServiceError};
-use crate::storage::models::vote::CastVoteRequest;
-use serde_json;
+use crate::storage::models::vote::{CommitVoteRequest, RevealVoteRequest};
 use std::sync::Arc;
 
 impl From<VoteServiceError> for ApiError {
@@ -15,6 +14,16 @@ impl From<VoteServiceError> for ApiError {
             }
             VoteServiceError::DuplicateVote => ApiError::BadRequest(
                 "Duplicate vote: voter has already voted on this poll".to_string(),
+            ),
+            VoteServiceError::VoteNotFound => ApiError::NotFound,
+            VoteServiceError::InvalidCommitment => ApiError::BadRequest(
+                "Invalid commitment: commitment verification failed".to_string(),
+            ),
+            VoteServiceError::VoteAlreadyRevealed => {
+                ApiError::BadRequest("Vote already revealed: cannot reveal vote twice".to_string())
+            }
+            VoteServiceError::PollNotInRevealPhase => ApiError::BadRequest(
+                "Poll not in reveal phase: cannot reveal vote during voting period".to_string(),
             ),
             VoteServiceError::ChainError(e) => ApiError::InternalError(format!("Chain error: {e}")),
             VoteServiceError::VoteRepositoryError(e) => {
@@ -42,42 +51,72 @@ impl VoteHandler {
         Self { vote_service }
     }
 
-    pub async fn cast_vote(&self, poll_id: &str, json_body: &str) -> Result<String, ApiError> {
-        // Parse poll_id
-        let poll_id: u32 = poll_id
+    fn parse_poll_id(poll_id: &str) -> Result<u32, ApiError> {
+        poll_id
             .parse()
-            .map_err(|_| ApiError::BadRequest("Invalid poll ID format".to_string()))?;
+            .map_err(|_| ApiError::BadRequest("Invalid poll ID format".to_string()))
+    }
 
-        // Parse request
-        let mut request: CastVoteRequest = serde_json::from_str(json_body)
+    fn parse_request_with_poll_id<T>(
+        json_body: &str,
+        poll_id: u32,
+        set_poll_id: impl FnOnce(&mut T, u32),
+    ) -> Result<T, ApiError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let mut request: T = serde_json::from_str(json_body)
             .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {e}")))?;
+        set_poll_id(&mut request, poll_id);
+        Ok(request)
+    }
 
-        // Set the poll_id from the URL parameter
-        request.poll_id = poll_id;
+    pub async fn commit_vote(&self, poll_id: &str, json_body: &str) -> Result<String, ApiError> {
+        let poll_id = Self::parse_poll_id(poll_id)?;
+        let request = Self::parse_request_with_poll_id(
+            json_body,
+            poll_id,
+            |req: &mut CommitVoteRequest, id| {
+                req.poll_id = id;
+            },
+        )?;
+        let response = self.vote_service.commit_vote(request).await?;
+        to_json_response(&response)
+    }
 
-        // Call service
-        let response = self.vote_service.cast_vote(request).await?;
+    pub async fn reveal_vote(&self, poll_id: &str, json_body: &str) -> Result<String, ApiError> {
+        let poll_id = Self::parse_poll_id(poll_id)?;
+        let request = Self::parse_request_with_poll_id(
+            json_body,
+            poll_id,
+            |req: &mut RevealVoteRequest, id| {
+                req.poll_id = id;
+            },
+        )?;
+        let response = self.vote_service.reveal_vote(request).await?;
+        to_json_response(&response)
+    }
 
-        // Return response as JSON
+    pub async fn finalize_poll(&self, poll_id: &str) -> Result<String, ApiError> {
+        let poll_id = Self::parse_poll_id(poll_id)?;
+        let (yay_count, nay_count) = self.vote_service.finalize_poll_results(poll_id).await?;
+        let response = serde_json::json!({
+            "poll_id": poll_id,
+            "yay_votes": yay_count,
+            "nay_votes": nay_count,
+            "status": "finalized"
+        });
         to_json_response(&response)
     }
 
     pub async fn get_poll_votes(&self, poll_id: &str) -> Result<String, ApiError> {
-        // Parse poll_id
-        let poll_id: u32 = poll_id
-            .parse()
-            .map_err(|_| ApiError::BadRequest("Invalid poll ID format".to_string()))?;
-
-        // Call service to get vote counts
+        let poll_id = Self::parse_poll_id(poll_id)?;
         let (yay_count, nay_count) = self.vote_service.get_vote_counts(poll_id).await?;
-
-        // Return counts as JSON
         let response = serde_json::json!({
             "poll_id": poll_id,
             "yay_votes": yay_count,
             "nay_votes": nay_count
         });
-
         to_json_response(&response)
     }
 }

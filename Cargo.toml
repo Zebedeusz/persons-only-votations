@@ -25,6 +25,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 fastrand = "2.0"
 verifiable = { version = "0.2.0", features = ["small-ring", "std"] }
+rand = { version = "0.8", features = ["std"] }
+rand_chacha = "0.3"
 
 [dev-dependencies]
 mockall = "0.12"

@@ -1,8 +1,12 @@
 use super::crypto_helpers::{
-    TestKeyPair, create_poll_signature_message, create_vote_signature_message,
+    TestKeyPair, create_commit_signature_message, create_poll_signature_message,
 };
 use super::setup::E2eTestSetup;
+use crate::crypto::commitments::{
+    commitment_to_hex, create_vote_commitment, generate_nonce, nonce_to_hex,
+};
 use crate::crypto::contexts::{context_to_string, generate_poll_context};
+use crate::storage::models::vote::VoteType;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -104,22 +108,44 @@ impl TestHelpers {
         Ok(response.json().await?)
     }
 
-    pub async fn submit_vote_via_api(
+
+    pub async fn commit_vote_via_api(
         http_client: &reqwest::Client,
         base_url: &str,
         poll_id: &str,
-        vote_data: &HashMap<&str, Value>,
+        commit_data: &HashMap<String, Value>,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let response = http_client
-            .post(format!("{base_url}/polls/{poll_id}/vote"))
+            .post(format!("{base_url}/polls/{poll_id}/commit"))
             .header("Content-Type", "application/json")
-            .json(vote_data)
+            .json(commit_data)
             .send()
             .await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(format!("Failed to submit vote: {error_text}").into());
+            return Err(format!("Failed to commit vote: {error_text}").into());
+        }
+
+        Ok(response.json().await?)
+    }
+
+    pub async fn reveal_vote_via_api(
+        http_client: &reqwest::Client,
+        base_url: &str,
+        poll_id: &str,
+        reveal_data: &HashMap<String, Value>,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let response = http_client
+            .post(format!("{base_url}/polls/{poll_id}/reveal"))
+            .header("Content-Type", "application/json")
+            .json(reveal_data)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Failed to reveal vote: {error_text}").into());
         }
 
         Ok(response.json().await?)
@@ -129,39 +155,10 @@ impl TestHelpers {
         poll_id: u32,
         vote_type: &str,
         voter_keypair: &TestKeyPair,
-    ) -> HashMap<&'static str, Value> {
-        // Generate the correct poll context
-        let context_bytes = generate_poll_context(poll_id);
-        let poll_context = context_to_string(&context_bytes);
-
-        // Create signature message
-        let message = create_vote_signature_message(
-            poll_id,
-            &voter_keypair.member_hex,
-            vote_type,
-            &poll_context,
-        );
-
-        // Sign the message
-        let signature = voter_keypair
-            .sign_message(&message)
-            .expect("Failed to sign message");
-
-        let mut vote_data = HashMap::new();
-        vote_data.insert("poll_id", Value::Number(poll_id.into()));
-        vote_data.insert(
-            "voter_member_hex",
-            Value::String(voter_keypair.member_hex.clone()),
-        );
-        vote_data.insert("vote_type", Value::String(vote_type.to_string()));
-        vote_data.insert("voter_signature", Value::String(signature));
-        // For e2e testing, we need to generate real ring proofs - no more test bypasses
-        // This will fail with an appropriate error if we can't generate a real proof
-        let ring_proof = "RING_PROOF_PLACEHOLDER".to_string(); // Will be replaced by async version
-
-        vote_data.insert("ring_proof", Value::String(ring_proof));
-
-        vote_data
+    ) -> HashMap<String, Value> {
+        // For backward compatibility, this now creates commit data
+        let nonce = generate_nonce();
+        Self::create_vote_commit_data(poll_id, vote_type, voter_keypair, &nonce)
     }
 
     pub async fn create_signed_vote_data_with_real_ring_proof(
@@ -169,28 +166,50 @@ impl TestHelpers {
         vote_type: &str,
         voter_keypair: &TestKeyPair,
         setup: &E2eTestSetup,
-    ) -> Result<HashMap<&'static str, Value>, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::crypto::contexts::{context_to_string, generate_poll_context};
-        use crate::e2e::crypto_helpers::create_vote_signature_message;
+    ) -> Result<HashMap<String, Value>, Box<dyn std::error::Error + Send + Sync>> {
+        // For backward compatibility, this now creates commit data with real ring proof
+        let nonce = generate_nonce();
+        Self::create_vote_commit_data_with_real_ring_proof(
+            poll_id,
+            vote_type,
+            voter_keypair,
+            &nonce,
+            setup,
+        )
+        .await
+    }
+
+    pub async fn create_vote_commit_data_with_real_ring_proof(
+        poll_id: u32,
+        vote_type: &str,
+        voter_keypair: &TestKeyPair,
+        nonce: &[u8; 32],
+        setup: &E2eTestSetup,
+    ) -> Result<HashMap<String, Value>, Box<dyn std::error::Error + Send + Sync>> {
+        // Parse vote type
+        let vote_type_enum = match vote_type.to_lowercase().as_str() {
+            "yay" | "yes" => VoteType::Yay,
+            "nay" | "no" => VoteType::Nay,
+            _ => VoteType::Yay, // default
+        };
+
+        // Create commitment
+        let commitment = create_vote_commitment(&vote_type_enum, nonce);
+        let commitment_hex = commitment_to_hex(&commitment);
 
         // Generate the correct poll context
         let context_bytes = generate_poll_context(poll_id);
         let poll_context = context_to_string(&context_bytes);
 
-        // Create signature message
-        let message = create_vote_signature_message(
-            poll_id,
-            &voter_keypair.member_hex,
-            vote_type,
-            &poll_context,
-        );
+        // Create signature message for commit phase (must match service format)
+        let message = create_commit_signature_message(poll_id, &commitment_hex, &poll_context);
 
         // Sign the message
         let signature = voter_keypair
             .sign_message(&message)
             .expect("Failed to sign message");
 
-        // Get the voter's ring index by querying the chain
+        // Get the voter's ring index from the chain
         let voter_ring_index =
             Self::get_voter_ring_index_from_chain(&voter_keypair.member_hex, setup).await?;
 
@@ -201,17 +220,131 @@ impl TestHelpers {
         let ring_proof =
             voter_keypair.generate_ring_proof(ring_keys.into_iter(), &context_bytes, &message)?;
 
-        let mut vote_data = HashMap::new();
-        vote_data.insert("poll_id", Value::Number(poll_id.into()));
-        vote_data.insert(
-            "voter_member_hex",
+        let mut commit_data = HashMap::new();
+        commit_data.insert("poll_id".to_string(), Value::Number(poll_id.into()));
+        commit_data.insert(
+            "voter_member_hex".to_string(),
             Value::String(voter_keypair.member_hex.clone()),
         );
-        vote_data.insert("vote_type", Value::String(vote_type.to_string()));
-        vote_data.insert("voter_signature", Value::String(signature));
-        vote_data.insert("ring_proof", Value::String(ring_proof));
+        commit_data.insert(
+            "vote_commitment".to_string(),
+            Value::String(commitment_hex.clone()),
+        );
+        commit_data.insert(
+            "voter_signature".to_string(),
+            Value::String(signature.clone()),
+        );
+        commit_data.insert("ring_proof".to_string(), Value::String(ring_proof));
 
-        Ok(vote_data)
+        Ok(commit_data)
+    }
+
+    pub fn create_vote_commit_data(
+        poll_id: u32,
+        vote_type: &str,
+        voter_keypair: &TestKeyPair,
+        nonce: &[u8; 32],
+    ) -> HashMap<String, Value> {
+        // Parse vote type
+        let vote_type_enum = match vote_type.to_lowercase().as_str() {
+            "yay" | "yes" => VoteType::Yay,
+            "nay" | "no" => VoteType::Nay,
+            _ => VoteType::Yay, // default
+        };
+
+        // Create commitment
+        let commitment = create_vote_commitment(&vote_type_enum, nonce);
+        let commitment_hex = commitment_to_hex(&commitment);
+
+        // Generate the correct poll context
+        let context_bytes = generate_poll_context(poll_id);
+        let poll_context = context_to_string(&context_bytes);
+
+        // Create signature message for commit phase (must match service format)
+        let message = create_commit_signature_message(poll_id, &commitment_hex, &poll_context);
+
+        // Sign the message
+        let signature = voter_keypair
+            .sign_message(&message)
+            .expect("Failed to sign message");
+
+        let mut commit_data = HashMap::new();
+        commit_data.insert("poll_id".to_string(), Value::Number(poll_id.into()));
+        commit_data.insert(
+            "voter_member_hex".to_string(),
+            Value::String(voter_keypair.member_hex.clone()),
+        );
+        commit_data.insert("vote_commitment".to_string(), Value::String(commitment_hex));
+        commit_data.insert("voter_signature".to_string(), Value::String(signature));
+        // For e2e testing, use placeholder ring proof
+        commit_data.insert(
+            "ring_proof".to_string(),
+            Value::String("RING_PROOF_PLACEHOLDER".to_string()),
+        );
+
+        commit_data
+    }
+
+    pub fn create_vote_reveal_data(
+        poll_id: u32,
+        vote_type: &str,
+        voter_keypair: &TestKeyPair,
+        nonce: &[u8; 32],
+    ) -> HashMap<String, Value> {
+        // Parse vote type
+        let _vote_type_enum = match vote_type.to_lowercase().as_str() {
+            "yay" | "yes" => VoteType::Yay,
+            "nay" | "no" => VoteType::Nay,
+            _ => VoteType::Yay, // default
+        };
+
+        let nonce_hex = nonce_to_hex(nonce);
+
+        let mut reveal_data = HashMap::new();
+        reveal_data.insert("poll_id".to_string(), Value::Number(poll_id.into()));
+        reveal_data.insert(
+            "voter_member_hex".to_string(),
+            Value::String(voter_keypair.member_hex.clone()),
+        );
+        reveal_data.insert(
+            "vote_type".to_string(),
+            Value::String(vote_type.to_string()),
+        );
+        reveal_data.insert("vote_nonce".to_string(), Value::String(nonce_hex));
+
+        reveal_data
+    }
+
+    pub async fn submit_full_vote_via_commit_reveal(
+        http_client: &reqwest::Client,
+        base_url: &str,
+        poll_id: &str,
+        vote_type: &str,
+        voter_keypair: &TestKeyPair,
+    ) -> Result<(Value, Value), Box<dyn std::error::Error + Send + Sync>> {
+        let poll_id_num: u32 = poll_id.parse()?;
+
+        // Generate nonce for commitment
+        let nonce = generate_nonce();
+
+        // Create commit data
+        let commit_data =
+            Self::create_vote_commit_data(poll_id_num, vote_type, voter_keypair, &nonce);
+
+        // Submit commit
+        let commit_response =
+            Self::commit_vote_via_api(http_client, base_url, poll_id, &commit_data).await?;
+
+        // Create reveal data
+        let reveal_data =
+            Self::create_vote_reveal_data(poll_id_num, vote_type, voter_keypair, &nonce);
+
+        // For e2e testing, we would normally wait for poll to end, but for testing we'll reveal immediately
+        // In production, this would wait for the poll voting period to end
+        let reveal_response =
+            Self::reveal_vote_via_api(http_client, base_url, poll_id, &reveal_data).await?;
+
+        Ok((commit_response, reveal_response))
     }
 
     async fn get_voter_ring_index_from_chain(

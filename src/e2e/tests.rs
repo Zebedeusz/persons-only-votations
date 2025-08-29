@@ -3,6 +3,7 @@ use super::{
     setup::E2eTestSetup,
     utils::{TestHelpers, TestPoll},
 };
+use crate::crypto::commitments::generate_nonce;
 
 #[tokio::test]
 async fn test_people_chain_connection() {
@@ -190,7 +191,7 @@ async fn test_poll_voting_without_identity_proof() {
     .await
     .expect("Failed to create vote data with real ring proof");
 
-    let vote_response = TestHelpers::submit_vote_via_api(
+    let vote_response = TestHelpers::commit_vote_via_api(
         &setup.http_client,
         &setup.config.server_base_url,
         &poll_id,
@@ -253,7 +254,32 @@ async fn test_recognized_users_poll_creation_and_voting() {
         creator_keypair.member_hex
     );
 
-    let poll_json = test_poll.to_json_with_keypair(&creator_keypair);
+    // Create a poll that ends in 5 seconds for testing the complete two-phase voting flow
+    let ends_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+        + 5; // Ends in 5 seconds
+
+    let message = format!(
+        r#"{{"name":"{}","description":"{}","ends_at":{}}}"#,
+        test_poll.title, test_poll.description, ends_at
+    );
+
+    let signature = creator_keypair
+        .sign_message(message.as_bytes())
+        .expect("Failed to sign message");
+
+    let poll_json = serde_json::json!({
+        "creator_member_hex": creator_keypair.member_hex,
+        "creator_signature": signature,
+        "poll_data": {
+            "name": test_poll.title,
+            "description": test_poll.description,
+            "ends_at": ends_at
+        }
+    });
+
     let response = setup
         .http_client
         .post(format!("{}/polls", setup.config.server_base_url))
@@ -305,27 +331,35 @@ async fn test_recognized_users_poll_creation_and_voting() {
         voter_keypair.member_hex
     );
 
-    let vote_data = TestHelpers::create_signed_vote_data_with_real_ring_proof(
+    // Generate nonce for the commit-reveal process
+    let nonce = generate_nonce();
+
+    let vote_data = TestHelpers::create_vote_commit_data_with_real_ring_proof(
         poll_id_num,
         "Yay",
         &voter_keypair,
+        &nonce,
         &setup,
     )
     .await
     .expect("Failed to create vote data with real ring proof");
 
-    let vote_response = TestHelpers::submit_vote_via_api(
+    let commit_response = TestHelpers::commit_vote_via_api(
         &setup.http_client,
         &setup.config.server_base_url,
         &poll_id,
         &vote_data,
     )
     .await
-    .expect("Failed to submit vote");
+    .expect("Failed to commit vote");
 
-    tracing::info!("Vote submitted successfully: {:?}", vote_response);
+    tracing::info!("Vote committed successfully: {:?}", commit_response);
 
-    // Verify vote was recorded by checking vote counts
+    // Store reveal data for later (after poll ends)
+    let reveal_data =
+        TestHelpers::create_vote_reveal_data(poll_id_num, "Yay", &voter_keypair, &nonce);
+
+    // First, verify that vote counts are hidden during voting period (privacy feature)
     let vote_counts_response = setup
         .http_client
         .get(format!(
@@ -337,26 +371,87 @@ async fn test_recognized_users_poll_creation_and_voting() {
         .expect("Failed to get vote counts");
 
     if vote_counts_response.status().is_success() {
-        let vote_counts: serde_json::Value = vote_counts_response
+        let vote_counts_during_voting: serde_json::Value = vote_counts_response
             .json()
             .await
             .expect("Failed to parse vote counts response");
 
-        tracing::info!("Vote counts: {:?}", vote_counts);
-
-        // Verify that at least one vote was recorded
-        let yay_votes = vote_counts["yay_votes"].as_u64().unwrap_or(0);
-        let nay_votes = vote_counts["nay_votes"].as_u64().unwrap_or(0);
-        let total_votes = yay_votes + nay_votes;
-
-        assert!(total_votes > 0, "At least one vote should be recorded");
         tracing::info!(
-            "Vote counting verification passed - total votes: {}",
-            total_votes
+            "Vote counts during voting period: {:?}",
+            vote_counts_during_voting
         );
-    } else {
-        tracing::warn!("Vote counts endpoint not available, skipping vote count verification");
+
+        // Verify that counts are hidden during voting period (should be 0)
+        let yay_votes_hidden = vote_counts_during_voting["yay_votes"].as_u64().unwrap_or(0);
+        let nay_votes_hidden = vote_counts_during_voting["nay_votes"].as_u64().unwrap_or(0);
+
+        assert_eq!(
+            yay_votes_hidden, 0,
+            "Vote counts should be hidden during voting period"
+        );
+        assert_eq!(
+            nay_votes_hidden, 0,
+            "Vote counts should be hidden during voting period"
+        );
+        tracing::info!(
+            "✓ Privacy verification passed - vote counts are hidden during voting period"
+        );
     }
+
+    // Wait for poll to end (poll was created to end in 5 seconds)
+    tracing::info!("Waiting for poll to end...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
+
+    // Now that the poll has ended, we can reveal the vote
+    tracing::info!("Revealing vote now that poll has ended...");
+    let reveal_response = TestHelpers::reveal_vote_via_api(
+        &setup.http_client,
+        &setup.config.server_base_url,
+        &poll_id,
+        &reveal_data,
+    )
+    .await
+    .expect("Failed to reveal vote");
+
+    tracing::info!("Vote revealed successfully: {:?}", reveal_response);
+
+    // Now finalize the poll to reveal vote counts
+    let finalize_response = setup
+        .http_client
+        .post(format!(
+            "{}/polls/{}/finalize",
+            setup.config.server_base_url, poll_id
+        ))
+        .send()
+        .await
+        .expect("Failed to send finalize request");
+
+    let vote_counts = if finalize_response.status().is_success() {
+        let finalize_result: serde_json::Value = finalize_response
+            .json()
+            .await
+            .expect("Failed to parse finalize response");
+        tracing::info!("Poll finalized successfully: {:?}", finalize_result);
+        finalize_result
+    } else {
+        let status = finalize_response.status();
+        let error_text = finalize_response.text().await.unwrap_or_default();
+        panic!("Failed to finalize poll: {status} - {error_text}");
+    };
+
+    // Verify that at least one vote was recorded after finalization
+    let yay_votes = vote_counts["yay_votes"].as_u64().unwrap_or(0);
+    let nay_votes = vote_counts["nay_votes"].as_u64().unwrap_or(0);
+    let total_votes = yay_votes + nay_votes;
+
+    assert!(
+        total_votes > 0,
+        "At least one vote should be recorded after finalization"
+    );
+    tracing::info!(
+        "✓ Vote counting verification passed - total votes after finalization: {}",
+        total_votes
+    );
 
     // Test voting with onboarding user (should fail)
     if let Some(onboarding_user) = setup.config.get_onboarding_user(0) {
@@ -385,7 +480,7 @@ async fn test_recognized_users_poll_creation_and_voting() {
             Ok(onboarding_vote_data) => {
                 // If ring proof generation unexpectedly succeeded, try to submit the vote
                 // (this should still fail at the server level)
-                let onboarding_vote_response = TestHelpers::submit_vote_via_api(
+                let onboarding_vote_response = TestHelpers::commit_vote_via_api(
                     &setup.http_client,
                     &setup.config.server_base_url,
                     &poll_id,
@@ -425,7 +520,7 @@ async fn test_recognized_users_poll_creation_and_voting() {
             .expect("Failed to retrieve poll after voting");
 
     assert_eq!(final_poll["name"], test_poll.title);
-    assert_eq!(final_poll["is_active"], true);
+    assert_eq!(final_poll["is_active"], false);
 
     tracing::info!(
         "E2E test completed successfully: poll created by user 1, voted by user 2, onboarding user vote correctly rejected"
@@ -560,7 +655,7 @@ async fn test_impersonation_attack_prevention() {
     .await
     .expect("Failed to create vote data with real ring proof");
 
-    let legitimate_vote_response = TestHelpers::submit_vote_via_api(
+    let legitimate_vote_response = TestHelpers::commit_vote_via_api(
         &setup.http_client,
         &setup.config.server_base_url,
         &poll_id,

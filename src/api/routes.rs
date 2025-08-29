@@ -40,8 +40,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/polls", get(get_all_polls))
         .route("/polls", post(create_poll))
         .route("/polls/:poll_id", get(get_poll))
-        .route("/polls/:poll_id/vote", post(cast_vote))
+        .route("/polls/:poll_id/commit", post(commit_vote))
+        .route("/polls/:poll_id/reveal", post(reveal_vote))
         .route("/polls/:poll_id/votes", get(get_poll_votes))
+        .route("/polls/:poll_id/finalize", post(finalize_poll))
         .with_state(Arc::new(state))
 }
 
@@ -62,17 +64,6 @@ async fn create_poll(
     Ok((StatusCode::CREATED, response))
 }
 
-async fn cast_vote(
-    Path(poll_id): Path<String>,
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<Value>,
-) -> Result<impl IntoResponse, ApiError> {
-    let handler = VoteHandler::new(state.vote_service.clone());
-    let json_body = payload_to_string(&payload)?;
-    let response = handler.cast_vote(&poll_id, &json_body).await?;
-    Ok((StatusCode::CREATED, response))
-}
-
 async fn get_all_polls(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     let handler = PollHandler::new(state.poll_service.clone());
     let response = handler.get_all_polls().await?;
@@ -90,6 +81,37 @@ async fn get_poll(
     let handler = PollHandler::new(state.poll_service.clone());
     let response = handler.get_poll(poll_id).await?;
     Ok(response)
+}
+
+async fn commit_vote(
+    Path(poll_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let handler = VoteHandler::new(state.vote_service.clone());
+    let json_body = payload_to_string(&payload)?;
+    let response = handler.commit_vote(&poll_id, &json_body).await?;
+    Ok((StatusCode::CREATED, response))
+}
+
+async fn reveal_vote(
+    Path(poll_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let handler = VoteHandler::new(state.vote_service.clone());
+    let json_body = payload_to_string(&payload)?;
+    let response = handler.reveal_vote(&poll_id, &json_body).await?;
+    Ok((StatusCode::OK, response))
+}
+
+async fn finalize_poll(
+    Path(poll_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let handler = VoteHandler::new(state.vote_service.clone());
+    let response = handler.finalize_poll(&poll_id).await?;
+    Ok((StatusCode::OK, response))
 }
 
 async fn get_poll_votes(

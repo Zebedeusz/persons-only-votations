@@ -1,7 +1,11 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
+use crate::crypto::commitments::{hex_to_commitment, hex_to_nonce, verify_commitment};
 use crate::crypto::contexts::string_to_context;
 use crate::crypto::ring_proof::{RingProofError, validate_ring_proof};
-use crate::storage::models::vote::{CastVoteRequest, CastVoteResponse, Vote, VoteType};
+use crate::storage::models::poll::Poll;
+use crate::storage::models::vote::{
+    CastVoteResponse, CommitVoteRequest, RevealVoteRequest, Vote, VotePhase, VoteType,
+};
 use crate::storage::repositories::poll_repository::Repository;
 use crate::storage::repositories::vote_repository::{VoteRepository, VoteRepositoryError};
 use std::sync::Arc;
@@ -20,6 +24,14 @@ pub enum VoteServiceError {
     PollNotActive,
     #[error("Duplicate vote: voter has already voted on this poll")]
     DuplicateVote,
+    #[error("Vote not found: no committed vote found for voter")]
+    VoteNotFound,
+    #[error("Invalid commitment: commitment verification failed")]
+    InvalidCommitment,
+    #[error("Vote already revealed: cannot reveal vote twice")]
+    VoteAlreadyRevealed,
+    #[error("Poll not in reveal phase: cannot reveal vote during voting period")]
+    PollNotInRevealPhase,
     #[error("Chain error: {0}")]
     ChainError(#[from] ChainError),
     #[error("Vote repository error: {0}")]
@@ -53,20 +65,28 @@ impl VoteService {
         }
     }
 
-    pub async fn cast_vote(&self, request: CastVoteRequest) -> Result<CastVoteResponse> {
+    fn get_current_timestamp() -> Result<i64> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| VoteServiceError::SystemTimeError)
+            .map(|duration| duration.as_secs() as i64)
+    }
+
+    fn validate_poll_active(poll: &Poll, current_time: i64) -> Result<()> {
+        if !poll.is_active || current_time > poll.ends_at {
+            return Err(VoteServiceError::PollNotActive);
+        }
+        Ok(())
+    }
+
+    pub async fn commit_vote(&self, request: CommitVoteRequest) -> Result<CastVoteResponse> {
         let poll = self
             .poll_repository
             .get_poll_by_id(request.poll_id)?
             .ok_or(VoteServiceError::PollNotFound(request.poll_id))?;
 
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| VoteServiceError::SystemTimeError)?
-            .as_secs() as i64;
-
-        if !poll.is_active || current_time > poll.ends_at {
-            return Err(VoteServiceError::PollNotActive);
-        }
+        let current_time = Self::get_current_timestamp()?;
+        Self::validate_poll_active(&poll, current_time)?;
 
         if self
             .vote_repository
@@ -87,19 +107,19 @@ impl VoteService {
             ));
         }
 
-        let message = self.create_vote_message(&request, &poll.context)?;
+        let commit_message = self.create_commit_message(&request, &poll.context)?;
         let signature_valid = self
             .chain_client
             .validate_signature(
                 &request.voter_member_hex,
                 &request.voter_signature,
-                &message,
+                &commit_message,
             )
             .await?;
 
         if !signature_valid {
             return Err(VoteServiceError::AuthorizationFailed(
-                "Invalid vote signature".to_string(),
+                "Invalid commit signature".to_string(),
             ));
         }
 
@@ -119,14 +139,18 @@ impl VoteService {
                 ))
             })?;
 
-        let voter_alias =
-            validate_ring_proof(&request.ring_proof, &ring_root, &context_bytes, &message)?;
+        let voter_alias = validate_ring_proof(
+            &request.ring_proof,
+            &ring_root,
+            &context_bytes,
+            &commit_message,
+        )?;
 
-        let vote = Vote::new(
+        let vote = Vote::new_commit(
             request.poll_id,
             request.voter_member_hex,
             voter_alias,
-            request.vote_type.clone(),
+            request.vote_commitment,
             request.voter_signature,
             request.ring_proof,
             current_time,
@@ -134,16 +158,54 @@ impl VoteService {
 
         self.vote_repository.create_vote(vote)?;
 
-        let (yay_count, nay_count) = self.vote_repository.count_votes_by_poll(request.poll_id)?;
+        Ok(CastVoteResponse {
+            poll_id: request.poll_id,
+            message: "Vote commitment submitted successfully".to_string(),
+        })
+    }
+
+    pub async fn reveal_vote(&self, request: RevealVoteRequest) -> Result<CastVoteResponse> {
+        let poll = self
+            .poll_repository
+            .get_poll_by_id(request.poll_id)?
+            .ok_or(VoteServiceError::PollNotFound(request.poll_id))?;
+
+        let current_time = Self::get_current_timestamp()?;
+
+        if poll.is_active && current_time <= poll.ends_at {
+            return Err(VoteServiceError::PollNotInRevealPhase);
+        }
+
+        let mut vote = self
+            .vote_repository
+            .get_vote_by_poll_and_voter(request.poll_id, &request.voter_member_hex)?
+            .ok_or(VoteServiceError::VoteNotFound)?;
+
+        if vote.phase == VotePhase::Revealed {
+            return Err(VoteServiceError::VoteAlreadyRevealed);
+        }
+
+        let commitment = hex_to_commitment(&vote.vote_commitment)
+            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid commitment hex: {e}")))?;
+        let nonce = hex_to_nonce(&request.vote_nonce)
+            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid nonce hex: {e}")))?;
+
+        if !verify_commitment(&commitment, &request.vote_type, &nonce) {
+            return Err(VoteServiceError::InvalidCommitment);
+        }
+
+        vote.reveal(request.vote_type.clone(), request.vote_nonce, current_time);
+        self.vote_repository.update_vote(vote)?;
+
+        let (yay_count, nay_count) = self.count_revealed_votes(request.poll_id)?;
         let mut updated_poll = poll;
         updated_poll.yay_votes = yay_count;
         updated_poll.nay_votes = nay_count;
-
         self.poll_repository.update_poll(updated_poll)?;
 
         let vote_type_message = match request.vote_type {
-            VoteType::Yay => "Yay vote cast successfully",
-            VoteType::Nay => "Nay vote cast successfully",
+            VoteType::Yay => "Yay vote revealed successfully",
+            VoteType::Nay => "Nay vote revealed successfully",
         };
 
         Ok(CastVoteResponse {
@@ -161,29 +223,40 @@ impl VoteService {
     }
 
     pub async fn get_vote_counts(&self, poll_id: u32) -> Result<(u32, u32)> {
-        self.poll_repository
+        let poll = self
+            .poll_repository
             .get_poll_by_id(poll_id)?
             .ok_or(VoteServiceError::PollNotFound(poll_id))?;
 
-        Ok(self.vote_repository.count_votes_by_poll(poll_id)?)
+        let current_time = Self::get_current_timestamp()?;
+
+        if poll.is_active && current_time <= poll.ends_at {
+            return Ok((0, 0));
+        }
+
+        self.count_revealed_votes(poll_id)
     }
 
-    fn create_vote_message(
-        &self,
-        request: &CastVoteRequest,
-        poll_context: &str,
-    ) -> Result<Vec<u8>> {
-        let vote_data = serde_json::json!({
-            "poll_id": request.poll_id,
-            "vote_type": request.vote_type,
-            "context": poll_context
-        });
+    pub async fn finalize_poll_results(&self, poll_id: u32) -> Result<(u32, u32)> {
+        let mut poll = self
+            .poll_repository
+            .get_poll_by_id(poll_id)?
+            .ok_or(VoteServiceError::PollNotFound(poll_id))?;
 
-        let message = serde_json::to_string(&vote_data).map_err(|e| {
-            VoteServiceError::InvalidData(format!("JSON serialization failed: {e}"))
-        })?;
+        let current_time = Self::get_current_timestamp()?;
+        if poll.is_active && current_time <= poll.ends_at {
+            return Err(VoteServiceError::PollNotActive);
+        }
 
-        Ok(message.as_bytes().to_vec())
+        let (yay_count, nay_count) = self.count_revealed_votes(poll_id)?;
+
+        poll.yay_votes = yay_count;
+        poll.nay_votes = nay_count;
+        poll.is_active = false;
+
+        self.poll_repository.update_poll(poll)?;
+
+        Ok((yay_count, nay_count))
     }
 
     async fn get_voter_ring_index(&self, member_hex: &str) -> Result<u16> {
@@ -211,5 +284,42 @@ impl VoteService {
             })?;
 
         Ok(ring_index)
+    }
+
+    fn create_commit_message(
+        &self,
+        request: &CommitVoteRequest,
+        poll_context: &str,
+    ) -> Result<Vec<u8>> {
+        let commit_data = serde_json::json!({
+            "poll_id": request.poll_id,
+            "vote_commitment": request.vote_commitment,
+            "context": poll_context
+        });
+
+        let message = serde_json::to_string(&commit_data).map_err(|e| {
+            VoteServiceError::InvalidData(format!("JSON serialization failed: {e}"))
+        })?;
+
+        Ok(message.as_bytes().to_vec())
+    }
+
+    fn count_revealed_votes(&self, poll_id: u32) -> Result<(u32, u32)> {
+        let votes = self.vote_repository.get_votes_by_poll(poll_id)?;
+        let mut yay_count = 0;
+        let mut nay_count = 0;
+
+        for vote in votes {
+            if vote.phase == VotePhase::Revealed {
+                if let Some(vote_type) = vote.vote_type {
+                    match vote_type {
+                        VoteType::Yay => yay_count += 1,
+                        VoteType::Nay => nay_count += 1,
+                    }
+                }
+            }
+        }
+
+        Ok((yay_count, nay_count))
     }
 }
