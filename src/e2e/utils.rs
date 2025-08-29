@@ -108,7 +108,6 @@ impl TestHelpers {
         Ok(response.json().await?)
     }
 
-
     pub async fn commit_vote_via_api(
         http_client: &reqwest::Client,
         base_url: &str,
