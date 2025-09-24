@@ -3531,6 +3531,8 @@ dependencies = [
  "hex",
  "mockall",
  "parity-scale-codec",
+ "rand",
+ "rand_chacha",
  "reqwest",
  "scale-info",
  "serde",

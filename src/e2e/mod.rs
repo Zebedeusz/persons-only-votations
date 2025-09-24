@@ -4,4 +4,6 @@ pub mod setup;
 pub mod utils;
 
 #[cfg(test)]
+mod test_helpers;
+#[cfg(test)]
 mod tests;

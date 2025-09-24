@@ -122,3 +122,19 @@ pub fn create_vote_signature_message(
         .as_bytes()
         .to_vec()
 }
+
+pub fn create_commit_signature_message(
+    poll_id: u32,
+    vote_commitment: &str,
+    poll_context: &str,
+) -> Vec<u8> {
+    let commit_data = serde_json::json!({
+        "poll_id": poll_id,
+        "vote_commitment": vote_commitment,
+        "context": poll_context
+    });
+
+    let message_json = serde_json::to_string(&commit_data).unwrap();
+    println!("DEBUG: Test message signed: {message_json:?}");
+    message_json.as_bytes().to_vec()
+}

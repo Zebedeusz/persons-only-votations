@@ -41,6 +41,13 @@ impl PollService {
         }
     }
 
+    fn get_current_timestamp() -> Result<i64> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| PollServiceError::SystemTimeError)
+            .map(|duration| duration.as_secs() as i64)
+    }
+
     pub async fn create_poll(&self, request: CreatePollRequest) -> Result<CreatePollResponse> {
         self.validate_poll_data(&request.poll_data)?;
 
@@ -80,10 +87,7 @@ impl PollService {
             ));
         }
 
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| PollServiceError::SystemTimeError)?
-            .as_secs() as i64;
+        let current_time = Self::get_current_timestamp()?;
 
         let poll = Poll::new(
             0,
@@ -123,35 +127,37 @@ impl PollService {
     }
 
     fn validate_poll_data(&self, poll_data: &PollData) -> Result<()> {
+        const MAX_NAME_LENGTH: usize = 200;
+        const MAX_DESCRIPTION_LENGTH: usize = 2000;
+        const MAX_DURATION_DAYS: i64 = 30;
+        const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+
         if poll_data.name.trim().is_empty() {
             return Err(PollServiceError::InvalidData(
                 "Name cannot be empty".to_string(),
             ));
         }
 
-        if poll_data.name.len() > 200 {
+        if poll_data.name.len() > MAX_NAME_LENGTH {
             return Err(PollServiceError::InvalidData("Name too long".to_string()));
         }
 
-        if poll_data.description.len() > 2000 {
+        if poll_data.description.len() > MAX_DESCRIPTION_LENGTH {
             return Err(PollServiceError::InvalidData(
                 "Description too long".to_string(),
             ));
         }
 
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| PollServiceError::SystemTimeError)?
-            .as_secs() as i64;
+        let current_time = Self::get_current_timestamp()?;
+        let duration = poll_data.ends_at - current_time;
 
-        if poll_data.ends_at <= current_time {
+        if duration <= 0 {
             return Err(PollServiceError::InvalidData(
                 "End time must be in the future".to_string(),
             ));
         }
 
-        // Max poll duration: 30 days
-        if poll_data.ends_at - current_time > 30 * 24 * 60 * 60 {
+        if duration > MAX_DURATION_DAYS * SECONDS_PER_DAY {
             return Err(PollServiceError::InvalidData(
                 "Poll duration cannot exceed 30 days".to_string(),
             ));
