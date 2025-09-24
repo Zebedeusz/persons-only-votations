@@ -82,3 +82,28 @@ pub struct CastVoteResponse {
     pub poll_id: u32,
     pub message: String,
 }
+
+// Encrypted voting models
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedVote {
+    pub poll_id: u32,
+    pub voter_member_hex: String,
+    pub voter_alias: String,
+    pub encrypted_vote: String,        // Hex-encoded Paillier-encrypted vote
+    pub vote_commitment: String,       // Pedersen commitment
+    pub validity_proof: String,        // Zero-knowledge proof that vote ∈ {0,1}
+    pub ring_proof: String,           // Existing anonymity proof
+    pub voter_signature: String,      // Hex-encoded verifiable crypto signature
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CastEncryptedVoteRequest {
+    pub poll_id: u32,
+    pub voter_member_hex: String,
+    pub encrypted_vote: String,
+    pub vote_commitment: String,
+    pub validity_proof: String,
+    pub ring_proof: String,
+    pub voter_signature: String,
+}

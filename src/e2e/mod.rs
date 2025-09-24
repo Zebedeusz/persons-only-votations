@@ -7,3 +7,5 @@ pub mod utils;
 mod test_helpers;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod homomorphic_tests;

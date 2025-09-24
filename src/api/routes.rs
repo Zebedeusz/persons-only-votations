@@ -44,6 +44,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/polls/:poll_id/reveal", post(reveal_vote))
         .route("/polls/:poll_id/votes", get(get_poll_votes))
         .route("/polls/:poll_id/finalize", post(finalize_poll))
+        // Encrypted voting endpoints
+        .route("/polls/:poll_id/cast-encrypted", post(cast_encrypted_vote))
+        .route("/polls/:poll_id/encrypted-votes", get(get_encrypted_votes))
+        .route("/polls/:poll_id/homomorphic-tally", get(get_homomorphic_tally))
         .with_state(Arc::new(state))
 }
 
@@ -120,5 +124,35 @@ async fn get_poll_votes(
 ) -> Result<impl IntoResponse, ApiError> {
     let handler = VoteHandler::new(state.vote_service.clone());
     let response = handler.get_poll_votes(&poll_id).await?;
+    Ok(response)
+}
+
+// Phase 2: Encrypted voting endpoints
+async fn cast_encrypted_vote(
+    Path(poll_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let handler = VoteHandler::new(state.vote_service.clone());
+    let json_body = payload_to_string(&payload)?;
+    let response = handler.cast_encrypted_vote(&poll_id, &json_body).await?;
+    Ok((StatusCode::CREATED, response))
+}
+
+async fn get_encrypted_votes(
+    Path(poll_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let handler = VoteHandler::new(state.vote_service.clone());
+    let response = handler.get_encrypted_votes(&poll_id).await?;
+    Ok(response)
+}
+
+async fn get_homomorphic_tally(
+    Path(poll_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let handler = VoteHandler::new(state.vote_service.clone());
+    let response = handler.get_homomorphic_tally(&poll_id).await?;
     Ok(response)
 }

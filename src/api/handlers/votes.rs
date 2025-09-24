@@ -1,6 +1,6 @@
 use super::polls::{ApiError, to_json_response};
 use crate::services::vote_service::{VoteService, VoteServiceError};
-use crate::storage::models::vote::{CommitVoteRequest, RevealVoteRequest};
+use crate::storage::models::vote::{CastEncryptedVoteRequest, CommitVoteRequest, RevealVoteRequest};
 use std::sync::Arc;
 
 impl From<VoteServiceError> for ApiError {
@@ -37,6 +37,9 @@ impl From<VoteServiceError> for ApiError {
             }
             VoteServiceError::RingProofError(e) => {
                 ApiError::BadRequest(format!("Ring proof validation failed: {e}"))
+            }
+            VoteServiceError::HomomorphicError(e) => {
+                ApiError::InternalError(format!("Homomorphic encryption error: {e}"))
             }
         }
     }
@@ -116,6 +119,42 @@ impl VoteHandler {
             "poll_id": poll_id,
             "yay_votes": yay_count,
             "nay_votes": nay_count
+        });
+        to_json_response(&response)
+    }
+
+    // Phase 2: Encrypted voting handlers
+    pub async fn cast_encrypted_vote(&self, poll_id: &str, json_body: &str) -> Result<String, ApiError> {
+        let poll_id = Self::parse_poll_id(poll_id)?;
+        let request = Self::parse_request_with_poll_id(
+            json_body,
+            poll_id,
+            |req: &mut CastEncryptedVoteRequest, id| {
+                req.poll_id = id;
+            },
+        )?;
+        let response = self.vote_service.cast_encrypted_vote(request).await?;
+        to_json_response(&response)
+    }
+
+    pub async fn get_encrypted_votes(&self, poll_id: &str) -> Result<String, ApiError> {
+        let poll_id = Self::parse_poll_id(poll_id)?;
+        let encrypted_votes = self.vote_service.get_poll_encrypted_votes(poll_id).await?;
+        let response = serde_json::json!({
+            "poll_id": poll_id,
+            "encrypted_votes": encrypted_votes
+        });
+        to_json_response(&response)
+    }
+
+    pub async fn get_homomorphic_tally(&self, poll_id: &str) -> Result<String, ApiError> {
+        let poll_id = Self::parse_poll_id(poll_id)?;
+        let (yay_count, nay_count) = self.vote_service.compute_homomorphic_tally(poll_id).await?;
+        let response = serde_json::json!({
+            "poll_id": poll_id,
+            "yay_votes": yay_count,
+            "nay_votes": nay_count,
+            "tally_type": "homomorphic"
         });
         to_json_response(&response)
     }

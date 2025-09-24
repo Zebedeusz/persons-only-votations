@@ -2,6 +2,7 @@ use hex;
 
 pub mod commitments;
 pub mod contexts;
+pub mod homomorphic;
 pub mod ring_proof;
 
 pub fn bytes32_to_hex(bytes: &[u8; 32]) -> String {
