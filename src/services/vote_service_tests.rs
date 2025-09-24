@@ -85,11 +85,17 @@ impl VoteRepository for MockVoteRepository {
         self.count_votes_by_poll_result.lock().unwrap().clone()
     }
 
-    fn create_encrypted_vote(&self, _encrypted_vote: crate::storage::models::vote::EncryptedVote) -> Result<(), VoteRepositoryError> {
+    fn create_encrypted_vote(
+        &self,
+        _encrypted_vote: crate::storage::models::vote::EncryptedVote,
+    ) -> Result<(), VoteRepositoryError> {
         Ok(())
     }
 
-    fn get_encrypted_votes_by_poll(&self, _poll_id: u32) -> Result<Vec<crate::storage::models::vote::EncryptedVote>, VoteRepositoryError> {
+    fn get_encrypted_votes_by_poll(
+        &self,
+        _poll_id: u32,
+    ) -> Result<Vec<crate::storage::models::vote::EncryptedVote>, VoteRepositoryError> {
         Ok(vec![])
     }
 

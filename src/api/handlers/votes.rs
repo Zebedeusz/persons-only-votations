@@ -1,6 +1,8 @@
 use super::polls::{ApiError, to_json_response};
 use crate::services::vote_service::{VoteService, VoteServiceError};
-use crate::storage::models::vote::{CastEncryptedVoteRequest, CommitVoteRequest, RevealVoteRequest};
+use crate::storage::models::vote::{
+    CastEncryptedVoteRequest, CommitVoteRequest, RevealVoteRequest,
+};
 use std::sync::Arc;
 
 impl From<VoteServiceError> for ApiError {
@@ -32,9 +34,7 @@ impl From<VoteServiceError> for ApiError {
             VoteServiceError::PollRepositoryError(e) => {
                 ApiError::InternalError(format!("Poll storage error: {e}"))
             }
-            VoteServiceError::TimeError(e) => {
-                ApiError::InternalError(format!("Time error: {e}"))
-            }
+            VoteServiceError::TimeError(e) => ApiError::InternalError(format!("Time error: {e}")),
             VoteServiceError::RingProofError(e) => {
                 ApiError::BadRequest(format!("Ring proof validation failed: {e}"))
             }
@@ -124,7 +124,11 @@ impl VoteHandler {
     }
 
     // Phase 2: Encrypted voting handlers
-    pub async fn cast_encrypted_vote(&self, poll_id: &str, json_body: &str) -> Result<String, ApiError> {
+    pub async fn cast_encrypted_vote(
+        &self,
+        poll_id: &str,
+        json_body: &str,
+    ) -> Result<String, ApiError> {
         let poll_id = Self::parse_poll_id(poll_id)?;
         let request = Self::parse_request_with_poll_id(
             json_body,

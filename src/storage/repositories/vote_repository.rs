@@ -1,4 +1,4 @@
-use crate::storage::models::vote::{Vote, EncryptedVote};
+use crate::storage::models::vote::{EncryptedVote, Vote};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -211,7 +211,10 @@ impl VoteRepository for InMemoryVoteRepository {
             .map_err(|_| VoteRepositoryError::LockError)?;
 
         // Check for duplicate encrypted vote by member key
-        let voter_index_key = (encrypted_vote.poll_id, encrypted_vote.voter_member_hex.clone());
+        let voter_index_key = (
+            encrypted_vote.poll_id,
+            encrypted_vote.voter_member_hex.clone(),
+        );
         if encrypted_voter_poll_index.contains_key(&voter_index_key) {
             return Err(VoteRepositoryError::DuplicateVote {
                 poll_id: encrypted_vote.poll_id,

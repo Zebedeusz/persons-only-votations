@@ -1,13 +1,13 @@
-use tfhe::shortint::prelude::*;
-use blake2::Digest;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use crate::storage::models::vote::VoteType;
+use blake2::Digest;
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
-use curve25519_dalek_ng::scalar::Scalar;
 use curve25519_dalek_ng::ristretto::CompressedRistretto;
+use curve25519_dalek_ng::scalar::Scalar;
 use merlin::Transcript;
 use rand::thread_rng;
+use serde::{Deserialize, Serialize};
+use tfhe::shortint::prelude::*;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum HomomorphicError {
@@ -47,8 +47,12 @@ pub struct PaillierVotingSystem {
 impl PaillierVotingSystem {
     /// Creates a new Paillier voting system with generated keys
     pub fn new() -> Result<Self, HomomorphicError> {
-        let (client_key, server_key) = gen_keys(tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS);
-        Ok(Self { client_key, server_key })
+        let (client_key, server_key) =
+            gen_keys(tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS);
+        Ok(Self {
+            client_key,
+            server_key,
+        })
     }
 
     /// Encrypts a vote value (0 for Nay, 1 for Yay)
@@ -64,7 +68,7 @@ impl PaillierVotingSystem {
     /// Computes homomorphic tally of encrypted votes
     pub fn homomorphic_tally(
         &self,
-        encrypted_votes: &[Ciphertext]
+        encrypted_votes: &[Ciphertext],
     ) -> Result<u64, HomomorphicError> {
         if encrypted_votes.is_empty() {
             return Ok(0);
@@ -87,7 +91,7 @@ impl PaillierVotingSystem {
     /// Computes homomorphic tally from hex-encoded encrypted votes
     pub fn homomorphic_tally_from_hex(
         &self,
-        encrypted_vote_hexes: &[String]
+        encrypted_vote_hexes: &[String],
     ) -> Result<u64, HomomorphicError> {
         if encrypted_vote_hexes.is_empty() {
             return Ok(0);
@@ -97,15 +101,13 @@ impl PaillierVotingSystem {
         let mut ciphertexts = Vec::with_capacity(encrypted_vote_hexes.len());
 
         for hex_vote in encrypted_vote_hexes {
-            let bytes = hex::decode(hex_vote)
-                .map_err(|e| HomomorphicError::DecryptionFailed(
-                    format!("Invalid hex encoding: {e}")
-                ))?;
+            let bytes = hex::decode(hex_vote).map_err(|e| {
+                HomomorphicError::DecryptionFailed(format!("Invalid hex encoding: {e}"))
+            })?;
 
-            let ciphertext: Ciphertext = bincode::deserialize(&bytes)
-                .map_err(|e| HomomorphicError::DecryptionFailed(
-                    format!("Failed to deserialize ciphertext: {e}")
-                ))?;
+            let ciphertext: Ciphertext = bincode::deserialize(&bytes).map_err(|e| {
+                HomomorphicError::DecryptionFailed(format!("Failed to deserialize ciphertext: {e}"))
+            })?;
 
             ciphertexts.push(ciphertext);
         }
@@ -117,10 +119,9 @@ impl PaillierVotingSystem {
     pub fn encrypt_vote_to_hex(&self, vote: &VoteType) -> Result<String, HomomorphicError> {
         let ciphertext = self.encrypt_vote(vote)?;
 
-        let serialized = bincode::serialize(&ciphertext)
-            .map_err(|e| HomomorphicError::EncryptionFailed(
-                format!("Failed to serialize ciphertext: {e}")
-            ))?;
+        let serialized = bincode::serialize(&ciphertext).map_err(|e| {
+            HomomorphicError::EncryptionFailed(format!("Failed to serialize ciphertext: {e}"))
+        })?;
 
         Ok(hex::encode(serialized))
     }
@@ -141,7 +142,7 @@ impl PaillierVotingSystem {
     pub fn create_validity_proof(
         &self,
         vote: &VoteType,
-        _encrypted_vote: &Ciphertext
+        _encrypted_vote: &Ciphertext,
     ) -> Result<String, HomomorphicError> {
         let vote_value = match vote {
             VoteType::Yay => 1u64,
@@ -170,7 +171,8 @@ impl PaillierVotingSystem {
             vote_value,
             &blinding,
             8, // n_bits = 8, proves value ∈ [0, 2^8) = [0, 256) = {0, 1, ..., 255}
-        ).map_err(|e| HomomorphicError::BulletproofGenerationFailed(format!("{e:?}")))?;
+        )
+        .map_err(|e| HomomorphicError::BulletproofGenerationFailed(format!("{e:?}")))?;
 
         // Serialize proof and commitment
         let proof_bytes = proof.to_bytes();
@@ -229,7 +231,13 @@ impl PaillierVotingSystem {
 
         // Verify the range proof
         range_proof
-            .verify_single(&bp_gens, &pc_gens, &mut transcript, &commitment_compressed, 8)
+            .verify_single(
+                &bp_gens,
+                &pc_gens,
+                &mut transcript,
+                &commitment_compressed,
+                8,
+            )
             .is_ok()
     }
 
@@ -309,8 +317,12 @@ mod tests {
         let yay_encrypted = system.encrypt_vote(&VoteType::Yay).unwrap();
         let nay_encrypted = system.encrypt_vote(&VoteType::Nay).unwrap();
 
-        let yay_proof = system.create_validity_proof(&VoteType::Yay, &yay_encrypted).unwrap();
-        let nay_proof = system.create_validity_proof(&VoteType::Nay, &nay_encrypted).unwrap();
+        let yay_proof = system
+            .create_validity_proof(&VoteType::Yay, &yay_encrypted)
+            .unwrap();
+        let nay_proof = system
+            .create_validity_proof(&VoteType::Nay, &nay_encrypted)
+            .unwrap();
 
         // Verify valid proofs
         assert!(system.verify_validity_proof(&yay_proof));
@@ -410,7 +422,10 @@ mod tests {
 
         let result = system.homomorphic_tally_from_hex(&invalid_hexes);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), HomomorphicError::DecryptionFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            HomomorphicError::DecryptionFailed(_)
+        ));
     }
 
     #[test]
@@ -421,6 +436,9 @@ mod tests {
 
         let result = system.homomorphic_tally_from_hex(&invalid_hexes);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), HomomorphicError::DecryptionFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            HomomorphicError::DecryptionFailed(_)
+        ));
     }
 }

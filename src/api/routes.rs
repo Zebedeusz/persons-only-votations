@@ -47,7 +47,10 @@ pub fn create_router(state: AppState) -> Router {
         // Encrypted voting endpoints
         .route("/polls/:poll_id/cast-encrypted", post(cast_encrypted_vote))
         .route("/polls/:poll_id/encrypted-votes", get(get_encrypted_votes))
-        .route("/polls/:poll_id/homomorphic-tally", get(get_homomorphic_tally))
+        .route(
+            "/polls/:poll_id/homomorphic-tally",
+            get(get_homomorphic_tally),
+        )
         .with_state(Arc::new(state))
 }
 

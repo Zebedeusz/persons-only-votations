@@ -1,15 +1,16 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
 use crate::crypto::commitments::{hex_to_commitment, hex_to_nonce, verify_commitment};
 use crate::crypto::contexts::string_to_context;
-use crate::crypto::homomorphic::{PaillierVotingSystem, HomomorphicError};
+use crate::crypto::homomorphic::{HomomorphicError, PaillierVotingSystem};
 use crate::crypto::ring_proof::{RingProofError, validate_ring_proof};
 use crate::storage::models::poll::Poll;
 use crate::storage::models::vote::{
-    CastEncryptedVoteRequest, CastVoteResponse, CommitVoteRequest, EncryptedVote, RevealVoteRequest, Vote, VotePhase, VoteType,
+    CastEncryptedVoteRequest, CastVoteResponse, CommitVoteRequest, EncryptedVote,
+    RevealVoteRequest, Vote, VotePhase, VoteType,
 };
 use crate::storage::repositories::poll_repository::Repository;
 use crate::storage::repositories::vote_repository::{VoteRepository, VoteRepositoryError};
-use crate::utils::{get_current_timestamp, TimeError};
+use crate::utils::{TimeError, get_current_timestamp};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -69,7 +70,6 @@ impl VoteService {
             paillier_system: PaillierVotingSystem::new().expect("Failed to create Paillier system"),
         }
     }
-
 
     fn validate_poll_active(poll: &Poll, current_time: i64) -> Result<()> {
         if !poll.is_active || current_time > poll.ends_at {
@@ -323,7 +323,10 @@ impl VoteService {
     }
 
     // Encrypted votes voting methods
-    pub async fn cast_encrypted_vote(&self, request: CastEncryptedVoteRequest) -> Result<CastVoteResponse> {
+    pub async fn cast_encrypted_vote(
+        &self,
+        request: CastEncryptedVoteRequest,
+    ) -> Result<CastVoteResponse> {
         let poll = self
             .poll_repository
             .get_poll_by_id(request.poll_id)?
@@ -371,7 +374,10 @@ impl VoteService {
         }
 
         // Verify validity proof
-        if !self.paillier_system.verify_validity_proof(&request.validity_proof) {
+        if !self
+            .paillier_system
+            .verify_validity_proof(&request.validity_proof)
+        {
             return Err(VoteServiceError::AuthorizationFailed(
                 "Invalid vote validity proof".to_string(),
             ));
@@ -456,7 +462,8 @@ impl VoteService {
             .collect();
 
         // Use homomorphic tally computation
-        let total_yay_votes = self.paillier_system
+        let total_yay_votes = self
+            .paillier_system
             .homomorphic_tally_from_hex(&encrypted_vote_hexes)?;
 
         let total_votes = encrypted_votes.len() as u64;
