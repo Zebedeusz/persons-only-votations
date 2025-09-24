@@ -64,8 +64,16 @@ async fn test_recognized_users_poll_creation_and_voting() {
     assert_poll_created_correctly(&setup, &poll_id, &test_poll, &creator_user).await;
 
     let nonce = crate::crypto::commitments::generate_nonce();
-    commit_vote(&setup, &poll_id, &voter_user, "Yay", &nonce).await;
+    commit_vote(&setup, &poll_id, &voter_user, "Yay", &nonce).await.expect("First vote should succeed");
     let reveal_data = create_reveal_data(&poll_id, &voter_user, "Yay", &nonce);
+
+    // Test that the same person cannot vote again
+    let second_nonce = crate::crypto::commitments::generate_nonce();
+    let second_vote_result = commit_vote(&setup, &poll_id, &voter_user, "No", &second_nonce).await;
+    assert!(
+        second_vote_result.is_err(),
+        "Second vote by the same user should be rejected"
+    );
 
     assert_vote_counts_hidden_during_voting(&setup, &poll_id).await;
 

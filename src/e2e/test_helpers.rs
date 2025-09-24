@@ -222,7 +222,7 @@ pub async fn commit_vote(
     voter_keypair: &TestKeyPair,
     choice: &str,
     nonce: &[u8; 32],
-) {
+) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
     let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
 
     let vote_data = TestHelpers::create_vote_commit_data_with_real_ring_proof(
@@ -232,17 +232,15 @@ pub async fn commit_vote(
         nonce,
         setup,
     )
-    .await
-    .expect("Failed to create vote data with real ring proof");
+    .await?;
 
-    let _commit_response = TestHelpers::commit_vote_via_api(
+    TestHelpers::commit_vote_via_api(
         &setup.http_client,
         &setup.config.server_base_url,
         poll_id,
         &vote_data,
     )
     .await
-    .expect("Failed to commit vote");
 }
 
 pub fn create_reveal_data(
