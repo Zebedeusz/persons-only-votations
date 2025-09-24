@@ -9,8 +9,8 @@ use crate::storage::models::vote::{
 };
 use crate::storage::repositories::poll_repository::Repository;
 use crate::storage::repositories::vote_repository::{VoteRepository, VoteRepositoryError};
+use crate::utils::{get_current_timestamp, TimeError};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -43,8 +43,8 @@ pub enum VoteServiceError {
     RingProofError(#[from] RingProofError),
     #[error("Homomorphic encryption error: {0}")]
     HomomorphicError(#[from] HomomorphicError),
-    #[error("System time error")]
-    SystemTimeError,
+    #[error("Time error: {0}")]
+    TimeError(#[from] TimeError),
 }
 
 pub type Result<T> = std::result::Result<T, VoteServiceError>;
@@ -70,12 +70,6 @@ impl VoteService {
         }
     }
 
-    fn get_current_timestamp() -> Result<i64> {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| VoteServiceError::SystemTimeError)
-            .map(|duration| duration.as_secs() as i64)
-    }
 
     fn validate_poll_active(poll: &Poll, current_time: i64) -> Result<()> {
         if !poll.is_active || current_time > poll.ends_at {
@@ -90,7 +84,7 @@ impl VoteService {
             .get_poll_by_id(request.poll_id)?
             .ok_or(VoteServiceError::PollNotFound(request.poll_id))?;
 
-        let current_time = Self::get_current_timestamp()?;
+        let current_time = get_current_timestamp()?;
         Self::validate_poll_active(&poll, current_time)?;
 
         if self
@@ -175,7 +169,7 @@ impl VoteService {
             .get_poll_by_id(request.poll_id)?
             .ok_or(VoteServiceError::PollNotFound(request.poll_id))?;
 
-        let current_time = Self::get_current_timestamp()?;
+        let current_time = get_current_timestamp()?;
 
         if poll.is_active && current_time <= poll.ends_at {
             return Err(VoteServiceError::PollNotInRevealPhase);
@@ -233,7 +227,7 @@ impl VoteService {
             .get_poll_by_id(poll_id)?
             .ok_or(VoteServiceError::PollNotFound(poll_id))?;
 
-        let current_time = Self::get_current_timestamp()?;
+        let current_time = get_current_timestamp()?;
 
         if poll.is_active && current_time <= poll.ends_at {
             return Ok((0, 0));
@@ -248,7 +242,7 @@ impl VoteService {
             .get_poll_by_id(poll_id)?
             .ok_or(VoteServiceError::PollNotFound(poll_id))?;
 
-        let current_time = Self::get_current_timestamp()?;
+        let current_time = get_current_timestamp()?;
         if poll.is_active && current_time <= poll.ends_at {
             return Err(VoteServiceError::PollNotActive);
         }
@@ -335,7 +329,7 @@ impl VoteService {
             .get_poll_by_id(request.poll_id)?
             .ok_or(VoteServiceError::PollNotFound(request.poll_id))?;
 
-        let current_time = Self::get_current_timestamp()?;
+        let current_time = get_current_timestamp()?;
         Self::validate_poll_active(&poll, current_time)?;
 
         // Check for duplicate vote
@@ -442,7 +436,7 @@ impl VoteService {
             .get_poll_by_id(poll_id)?
             .ok_or(VoteServiceError::PollNotFound(poll_id))?;
 
-        let current_time = Self::get_current_timestamp()?;
+        let current_time = get_current_timestamp()?;
 
         // Only allow tally computation after poll ends
         if poll.is_active && current_time <= poll.ends_at {

@@ -122,7 +122,7 @@ async fn test_homomorphic_tally_with_multiple_encrypted_votes() {
     assert_eq!(encrypted_votes.len(), 3, "Should have three encrypted votes");
 
     println!("✅ Homomorphic tally with multiple encrypted votes test passed");
-    println!("   📊 Computed tally: {} Yay votes from 3 total votes", total_yay_votes);
+    println!("   📊 Computed tally: {total_yay_votes} Yay votes from 3 total votes");
 }
 
 #[tokio::test]
@@ -246,7 +246,7 @@ async fn test_homomorphic_properties_end_to_end() {
     // Get multiple voters
     let voters: Vec<_> = (1..=5).map(|i| {
         let user = setup.config.get_recognized_person(i)
-            .expect(&format!("Need recognized user {}", i));
+            .unwrap_or_else(|| panic!("Need recognized user {i}"));
         TestKeyPair::from_secret_scalar(&user.secret_scalar, &user.member_hex)
             .expect("Failed to create voter keypair")
     }).collect();
@@ -258,7 +258,7 @@ async fn test_homomorphic_properties_end_to_end() {
         .expect("Failed to create homomorphic voting system");
 
     // Cast votes with known pattern: [Yay, Nay, Yay, Yay, Nay] = 3 Yay votes
-    let vote_pattern = vec![
+    let vote_pattern = [
         VoteType::Yay,  // 1
         VoteType::Nay,  // 0
         VoteType::Yay,  // 1
@@ -303,7 +303,7 @@ async fn test_homomorphic_properties_end_to_end() {
     assert_eq!(encrypted_votes.len(), 5, "All 5 encrypted votes should be stored");
 
     println!("✅ Homomorphic properties end-to-end test passed");
-    println!("   🔢 Pattern: [Yay,Nay,Yay,Yay,Nay] → {} Yay votes", total_yay_votes);
+    println!("   🔢 Pattern: [Yay,Nay,Yay,Yay,Nay] → {total_yay_votes} Yay votes");
 }
 
 // Helper functions for e2e encrypted voting tests
@@ -346,7 +346,7 @@ async fn cast_encrypted_vote_via_api(
         "validity_proof": validity_proof,
         "ring_proof": ring_proof,
         "voter_member_hex": voter.member_hex,
-        "signature": voter.sign_message(format!("vote_{}", poll_id).as_bytes()).expect("Failed to sign message")
+        "signature": voter.sign_message(format!("vote_{poll_id}").as_bytes()).expect("Failed to sign message")
     });
 
     setup

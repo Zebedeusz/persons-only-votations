@@ -35,82 +35,49 @@ The server will start on `http://127.0.0.1:3000` by default and automatically co
 ## Project idea
 
 Platform enabling creation, follow-up and management of votations/polls.
-Participants verification done with personhood assurance mechanism defined in "_individuality_" project.
-To interact with _People_ chain where the _individuality_ pallets are located, subxt library is used.
+Participants verification done with personhood assurance blockchain system - People Chain.
+To interact with the _People_ chain, subxt library is used.
 
 The whole project should have its separate Bandersnatch Ring context prefix.
 Then each votation should have a separate Bandersnatch Ring context, 
 so e.g. a votation's context would be PERSONS_POLL_{{poll_id}} = PERSONS_POLL_123456
-This, in order to ensure a person can vote only once in a votation and that their vote is private.
 
-Technically, this is a typical backend application that only communicates 
+This is a typical backend application that only communicates 
 with the blockchain to verify user's personhood.
 Thus, in order to achieve data persistence with blockchain resilience, 
-at least the data layer should be handled by a polkadot-sdk pallet.
-
-## API
-
-HTTP REST.
-
-User managements necessary (login etc, my_polls, my_votes) - or maybe can be done with smth like "login with Bandersnatch blockchain key"?
-
-- POST create_poll(creator_public_key, creator_signature, poll_data)
-  - Flow:
-  1. Check signature
-  2. Check creator personhood
-  3. Basic poll validation
-  4. Create a separate context for the poll
-  5. Persist poll data
-- POST vote(voter_public_key, voter_signature, vote)
-  1. Check signature
-  2. Check voter personhood
-  3. Basic validation (poll exists, is not finished etc)
-  4. Cast the vote (modify poll's tally, mark the person as voted; persist all that)
-- GET my_polls
-- GET my_votes
-
-## Data Model
-
-```rust
-struct Poll { // only simple majority supported
-    id: u32,
-    public: bool, // if true, all users can vote; if false, the creator has to specify which users can vote or invite them
-    name: String,
-    description: String,
-    tally: Tally,
-    created_at: Timestamp,
-    ends_at: Timestamp,
-    context: String,
-}
-```
-
-```rust
-struct Tally {}
-```
-
-```rust
-struct Vote {
-    poll_id: u32,
-    user_id: u32, // or user_key?
-    vote_type: VoteType,
-}
-```
-
-```rust
-enum VoteType {
-    Yay,
-    Nay,
-}
-
-```
+at least the data layer should be handled on chain.
 
 ## E2E Tests
 
-In order to run E2E tests:
-- run a local node of people chain
-- specify the node's address in the config
-- run the server
-- run the tests.
+### Prerequisites
+1. Start a local People chain node
+2. Test users must be registered and included in active rings (not just onboarding)
+
+### Running E2E Tests
+
+**Standard E2E tests:**
+```bash
+cargo test e2e
+```
+
+**With custom People chain endpoint:**
+```bash
+E2E_PEOPLE_CHAIN_ENDPOINT=ws://127.0.0.1:9944 cargo test e2e
+```
+
+**With debug logging:**
+```bash
+RUST_LOG=debug cargo test e2e -- --nocapture
+```
+
+**Specific test examples:**
+```bash
+# Test poll creation and voting with identity proofs
+RUST_LOG=debug cargo test test_recognized_users_poll_creation_and_voting -- --nocapture
+
+# Test basic poll operations
+RUST_LOG=debug cargo test e2e::tests::test_basic_poll_creation_and_retrieval -- --nocapture
+```
 
 ## Running the server
 

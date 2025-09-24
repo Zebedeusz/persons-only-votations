@@ -2,8 +2,8 @@ use crate::chain::people_multi::{ChainClient, ChainError};
 use crate::crypto::contexts::{context_to_string, generate_poll_context};
 use crate::storage::models::poll::{CreatePollRequest, Poll, PollData};
 use crate::storage::repositories::poll_repository::{PollRepositoryError, Repository};
+use crate::utils::{get_current_timestamp, TimeError};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -16,11 +16,12 @@ pub enum PollServiceError {
     ChainError(#[from] ChainError),
     #[error("Repository error: {0}")]
     RepositoryError(#[from] PollRepositoryError),
-    #[error("System time error")]
-    SystemTimeError,
+    #[error("Time error: {0}")]
+    TimeError(#[from] TimeError),
 }
 
 pub type Result<T> = std::result::Result<T, PollServiceError>;
+
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CreatePollResponse {
@@ -41,12 +42,6 @@ impl PollService {
         }
     }
 
-    fn get_current_timestamp() -> Result<i64> {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| PollServiceError::SystemTimeError)
-            .map(|duration| duration.as_secs() as i64)
-    }
 
     pub async fn create_poll(&self, request: CreatePollRequest) -> Result<CreatePollResponse> {
         self.validate_poll_data(&request.poll_data)?;
@@ -87,7 +82,7 @@ impl PollService {
             ));
         }
 
-        let current_time = Self::get_current_timestamp()?;
+        let current_time = get_current_timestamp()?;
 
         let poll = Poll::new(
             0,
@@ -148,7 +143,7 @@ impl PollService {
             ));
         }
 
-        let current_time = Self::get_current_timestamp()?;
+        let current_time = get_current_timestamp()?;
         let duration = poll_data.ends_at - current_time;
 
         if duration <= 0 {

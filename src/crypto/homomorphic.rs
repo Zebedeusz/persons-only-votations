@@ -81,7 +81,7 @@ impl PaillierVotingSystem {
         // Decrypt the final tally
         let tally_value = self.client_key.decrypt(&tally_encrypted);
 
-        Ok(tally_value as u64)
+        Ok(tally_value)
     }
 
     /// Computes homomorphic tally from hex-encoded encrypted votes
@@ -97,22 +97,19 @@ impl PaillierVotingSystem {
         let mut ciphertexts = Vec::with_capacity(encrypted_vote_hexes.len());
 
         for hex_vote in encrypted_vote_hexes {
-            // Decode hex string to bytes
             let bytes = hex::decode(hex_vote)
                 .map_err(|e| HomomorphicError::DecryptionFailed(
-                    format!("Invalid hex encoding: {}", e)
+                    format!("Invalid hex encoding: {e}")
                 ))?;
 
-            // Deserialize bytes to Ciphertext using bincode
             let ciphertext: Ciphertext = bincode::deserialize(&bytes)
                 .map_err(|e| HomomorphicError::DecryptionFailed(
-                    format!("Failed to deserialize ciphertext: {}", e)
+                    format!("Failed to deserialize ciphertext: {e}")
                 ))?;
 
             ciphertexts.push(ciphertext);
         }
 
-        // Use existing homomorphic_tally method
         self.homomorphic_tally(&ciphertexts)
     }
 
@@ -122,7 +119,7 @@ impl PaillierVotingSystem {
 
         let serialized = bincode::serialize(&ciphertext)
             .map_err(|e| HomomorphicError::EncryptionFailed(
-                format!("Failed to serialize ciphertext: {}", e)
+                format!("Failed to serialize ciphertext: {e}")
             ))?;
 
         Ok(hex::encode(serialized))
@@ -136,7 +133,7 @@ impl PaillierVotingSystem {
     /// Test helper: decrypt a ciphertext (for testing only)
     #[cfg(test)]
     pub fn test_decrypt(&self, ciphertext: &Ciphertext) -> u64 {
-        self.client_key.decrypt(ciphertext) as u64
+        self.client_key.decrypt(ciphertext)
     }
 
     /// Creates a zero-knowledge proof that the encrypted vote is valid (0 or 1)
@@ -173,7 +170,7 @@ impl PaillierVotingSystem {
             vote_value,
             &blinding,
             8, // n_bits = 8, proves value ∈ [0, 2^8) = [0, 256) = {0, 1, ..., 255}
-        ).map_err(|e| HomomorphicError::BulletproofGenerationFailed(format!("{:?}", e)))?;
+        ).map_err(|e| HomomorphicError::BulletproofGenerationFailed(format!("{e:?}")))?;
 
         // Serialize proof and commitment
         let proof_bytes = proof.to_bytes();
@@ -247,7 +244,7 @@ impl PaillierVotingSystem {
         let blinding_factor = fastrand::u64(..);
 
         // Create commitment (simplified version)
-        let commitment_data = format!("pedersen:{}:{}", vote_value, blinding_factor);
+        let commitment_data = format!("pedersen:{vote_value}:{blinding_factor}");
 
         let mut hasher = blake2::Blake2b512::new();
         hasher.update(commitment_data.as_bytes());

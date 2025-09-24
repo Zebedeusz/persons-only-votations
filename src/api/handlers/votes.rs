@@ -32,8 +32,8 @@ impl From<VoteServiceError> for ApiError {
             VoteServiceError::PollRepositoryError(e) => {
                 ApiError::InternalError(format!("Poll storage error: {e}"))
             }
-            VoteServiceError::SystemTimeError => {
-                ApiError::InternalError("System time error".to_string())
+            VoteServiceError::TimeError(e) => {
+                ApiError::InternalError(format!("Time error: {e}"))
             }
             VoteServiceError::RingProofError(e) => {
                 ApiError::BadRequest(format!("Ring proof validation failed: {e}"))

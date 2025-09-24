@@ -135,6 +135,5 @@ pub fn create_commit_signature_message(
     });
 
     let message_json = serde_json::to_string(&commit_data).unwrap();
-    println!("DEBUG: Test message signed: {message_json:?}");
     message_json.as_bytes().to_vec()
 }
