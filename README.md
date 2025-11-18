@@ -1,8 +1,21 @@
 # Persons-only Votations
 
+## Project idea
+
+Platform enabling creation, follow-up and management of votations/polls.
+Participants verification done with personhood assurance blockchain system - People Chain.
+To interact with the _People_ chain, subxt library is used.
+
+The whole project should have its separate Bandersnatch Ring context prefix.
+Then each votation should have a separate Bandersnatch Ring context,
+so e.g. a votation's context would be PERSONS_POLL_{{poll_id}} = PERSONS_POLL_123456
+
+This is a typical backend application that only communicates
+with the blockchain to verify user's personhood.
+Thus, in order to achieve data persistence with blockchain resilience,
+at least the data layer should be handled on chain.
+
 ## Left To Do
-- make voting more private (ZK?) - so as not to reveal one's vote
-- README update,
 - cleanup - retain only what's necessary,
 - code simplification.
 
@@ -32,21 +45,6 @@ cargo run
 
 The server will start on `http://127.0.0.1:3000` by default and automatically connect to the People Chain or fall back to mock mode for development.
 
-## Project idea
-
-Platform enabling creation, follow-up and management of votations/polls.
-Participants verification done with personhood assurance blockchain system - People Chain.
-To interact with the _People_ chain, subxt library is used.
-
-The whole project should have its separate Bandersnatch Ring context prefix.
-Then each votation should have a separate Bandersnatch Ring context, 
-so e.g. a votation's context would be PERSONS_POLL_{{poll_id}} = PERSONS_POLL_123456
-
-This is a typical backend application that only communicates 
-with the blockchain to verify user's personhood.
-Thus, in order to achieve data persistence with blockchain resilience, 
-at least the data layer should be handled on chain.
-
 ## E2E Tests
 
 ### Prerequisites
@@ -54,6 +52,25 @@ at least the data layer should be handled on chain.
 2. Test users must be registered and included in active rings (not just onboarding)
 
 ### Running E2E Tests
+
+1. Runtime configured with people pallet as:
+    ```rust
+        type MaxRingSize = ConstU32<2>;
+        type OnboardingQueuePageSize = ConstU32<2>;
+    ```
+2. Build the runtime
+`cargo build --release -p people-rococo-runtime`
+3. Run the node
+`zombienet_stuff % zombienet -p native spawn ../individuality/runtimes/people-rococo/zombienet/small_network.toml`
+4. Read the port at which Charlie operates and use it later as node port - modify registration script, .env and .env.e2e
+5. Register test users
+`people_tests in send-tx`
+6. Make sure all users were registered
+7. Run the server
+`cargo run`
+8. Modify test_users.json as per the output of registration script
+9. Run the tests
+`cargo test e2e`
 
 **Standard E2E tests:**
 ```bash
@@ -70,7 +87,7 @@ E2E_PEOPLE_CHAIN_ENDPOINT=ws://127.0.0.1:9944 cargo test e2e
 RUST_LOG=debug cargo test e2e -- --nocapture
 ```
 
-**Specific test examples:**
+**Specific tests:**
 ```bash
 # Test poll creation and voting with identity proofs
 RUST_LOG=debug cargo test test_recognized_users_poll_creation_and_voting -- --nocapture

@@ -17,7 +17,73 @@ pub async fn setup_test_environment() -> E2eTestSetup {
         .await
         .expect("Server should be available");
 
+    // Verify required users are registered on the People chain
+    verify_users_registered_on_chain(&setup).await;
+
     setup
+}
+
+/// Verifies that required test users are properly registered on the People chain
+pub async fn verify_users_registered_on_chain(setup: &E2eTestSetup) {
+    use super::utils::TestHelpers;
+
+    let people_client = setup.people_client().expect("People client should be available");
+    let required_user_count = 6; // Ensure we have at least 6 users for homomorphic tests
+
+    // First verify People chain connectivity
+    match people_client.blocks().at_latest().await {
+        Ok(chain_info) => {
+            let block_number = chain_info.header().number;
+            tracing::info!("✅ Connected to People chain at block: {}", block_number);
+            if block_number == 0 {
+                tracing::warn!("⚠️  People chain is at block 0, may not be fully initialized");
+            }
+        }
+        Err(e) => {
+            panic!("❌ Failed to connect to People chain: {}. Ensure the People chain is running and accessible.", e);
+        }
+    }
+
+    for i in 0..required_user_count {
+        if let Some(user) = setup.config.get_recognized_person(i) {
+            // Check if user data is populated (not empty)
+            if user.secret_scalar.is_empty() || user.member_hex.is_empty() || user.member_bytes.is_empty() {
+                panic!("❌ Test user {} has empty credentials. Run the chain setup script to populate user data.", i);
+            }
+
+            // Verify user is actually registered in a ring on the chain
+            match TestHelpers::get_voter_ring_index_from_chain(&user.member_hex, setup).await {
+                Ok(ring_index) => {
+                    tracing::info!("✅ User {} (hex: {}) is registered in ring {}", i, &user.member_hex[0..8], ring_index);
+
+                    // Verify the ring has sufficient members
+                    match TestHelpers::get_ring_keys_from_chain(ring_index, setup).await {
+                        Ok(ring_keys) => {
+                            if ring_keys.len() < 2 {
+                                tracing::warn!("⚠️  Ring {} only has {} members, may affect ring proof generation", ring_index, ring_keys.len());
+                            } else {
+                                tracing::info!("✅ Ring {} has {} members", ring_index, ring_keys.len());
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ Failed to get ring keys for user {} in ring {}: {}", i, ring_index, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    if e.to_string().contains("Person is not included in any ring") {
+                        panic!("❌ Test user {} ({}) is not included in any ring. User may be in onboarding status. Ensure users are properly registered and included in active rings.", i, &user.member_hex[0..8]);
+                    } else {
+                        panic!("❌ Failed to verify ring membership for test user {} ({}): {}. Check People chain setup.", i, &user.member_hex[0..8], e);
+                    }
+                }
+            }
+        } else {
+            panic!("❌ Test user {} not found in configuration. Ensure test_users.json has at least {} users.", i, required_user_count);
+        }
+    }
+
+    tracing::info!("✅ Verified {} test users are properly registered in People chain rings", required_user_count);
 }
 
 pub fn get_test_users(setup: &E2eTestSetup) -> (TestKeyPair, TestKeyPair) {

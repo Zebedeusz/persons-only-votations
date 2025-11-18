@@ -156,9 +156,18 @@ impl VoteHandler {
         let (yay_count, nay_count) = self.vote_service.compute_homomorphic_tally(poll_id).await?;
         let response = serde_json::json!({
             "poll_id": poll_id,
-            "yay_votes": yay_count,
-            "nay_votes": nay_count,
+            "total_yay_votes": yay_count,
+            "total_nay_votes": nay_count,
             "tally_type": "homomorphic"
+        });
+        to_json_response(&response)
+    }
+
+    pub async fn get_encryption_key(&self) -> Result<String, ApiError> {
+        let public_key = self.vote_service.get_public_encryption_key()?;
+        let response = serde_json::json!({
+            "public_key": public_key,
+            "key_type": "tfhe_client_key"
         });
         to_json_response(&response)
     }

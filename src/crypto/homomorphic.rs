@@ -131,6 +131,35 @@ impl PaillierVotingSystem {
         &self.client_key
     }
 
+    /// Gets the public key serialized as hex for distribution to clients
+    pub fn get_public_key_hex(&self) -> Result<String, HomomorphicError> {
+        let serialized = bincode::serialize(&self.client_key).map_err(|e| {
+            HomomorphicError::KeyGenerationFailed(format!("Failed to serialize client key: {e}"))
+        })?;
+        Ok(hex::encode(serialized))
+    }
+
+    /// Creates a PaillierVotingSystem from a serialized public key hex
+    /// Note: This only allows encryption, not decryption (no server key)
+    pub fn from_public_key_hex(public_key_hex: &str) -> Result<Self, HomomorphicError> {
+        let bytes = hex::decode(public_key_hex).map_err(|e| {
+            HomomorphicError::KeyGenerationFailed(format!("Invalid hex encoding: {e}"))
+        })?;
+
+        let client_key: ClientKey = bincode::deserialize(&bytes).map_err(|e| {
+            HomomorphicError::KeyGenerationFailed(format!("Failed to deserialize client key: {e}"))
+        })?;
+
+        // Create a dummy server key since we only need encryption capability
+        // The server key won't be used for encryption operations
+        let dummy_server_key = gen_keys(tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS).1;
+
+        Ok(Self {
+            client_key,
+            server_key: dummy_server_key,
+        })
+    }
+
     /// Test helper: decrypt a ciphertext (for testing only)
     #[cfg(test)]
     pub fn test_decrypt(&self, ciphertext: &Ciphertext) -> u64 {

@@ -461,7 +461,7 @@ impl VoteService {
             .map(|vote| vote.encrypted_vote.clone())
             .collect();
 
-        // Use homomorphic tally computation
+        // Use real homomorphic tally computation
         let total_yay_votes = self
             .paillier_system
             .homomorphic_tally_from_hex(&encrypted_vote_hexes)?;
@@ -491,5 +491,12 @@ impl VoteService {
         })?;
 
         Ok(message.as_bytes().to_vec())
+    }
+
+    /// Gets the public encryption key for homomorphic voting
+    pub fn get_public_encryption_key(&self) -> Result<String> {
+        self.paillier_system
+            .get_public_key_hex()
+            .map_err(VoteServiceError::HomomorphicError)
     }
 }

@@ -346,7 +346,7 @@ impl TestHelpers {
         Ok((commit_response, reveal_response))
     }
 
-    async fn get_voter_ring_index_from_chain(
+    pub async fn get_voter_ring_index_from_chain(
         member_hex: &str,
         setup: &E2eTestSetup,
     ) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
@@ -400,7 +400,7 @@ impl TestHelpers {
         }
     }
 
-    async fn get_ring_keys_from_chain(
+    pub async fn get_ring_keys_from_chain(
         ring_index: u16,
         setup: &E2eTestSetup,
     ) -> Result<

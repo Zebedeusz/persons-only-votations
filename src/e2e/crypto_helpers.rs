@@ -19,23 +19,38 @@ impl TestKeyPair {
     }
 
     pub fn from_secret_scalar(
-        _secret_scalar: &str,
+        secret_scalar: &str,
         member_hex: &str,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let entropy = match member_hex {
-            "5e465beb01dbafe160ce8216047f2155dd0569f058afd52dcea601025a8d161d" => [0u8; 32], // User 1
-            "3f9828dfc4e8fdc12ed5f7e6f380b5d30ff328613e6d3e4a27e24ca3e64474b9" => [1u8; 32], // User 2
-            "7539d69a545904e39cabc487a63ae3b9f863afefede3f49c786a5047c5189cdb" => [2u8; 32], // User 3
-            _ => {
-                let member_bytes = hex::decode(member_hex)?;
-                if member_bytes.len() != 32 {
-                    return Err("Member hex must decode to 32 bytes".into());
+        // The chain script creates entropy as [personal_id as u8; 32]
+        // We need to reverse-engineer which personal_id was used
+
+        // Try different personal_id values to find the one that produces the expected member_hex
+        for personal_id in 0u8..=255 {
+            let entropy = [personal_id; 32];
+            let secret = BandersnatchVrfVerifiable::new_secret(entropy);
+            let derived_member = BandersnatchVrfVerifiable::member_from_secret(&secret);
+            let derived_hex = hex::encode(derived_member.0);
+
+            if derived_hex == member_hex {
+                // Verify the scalar matches too
+                if secret.scalar.to_string() == secret_scalar {
+                    return Ok(Self {
+                        member_hex: member_hex.to_string(),
+                        secret,
+                    });
                 }
-                let mut entropy = [0u8; 32];
-                entropy.copy_from_slice(&member_bytes);
-                entropy
             }
-        };
+        }
+
+        // If we can't find a matching personal_id, fall back to the member_bytes as entropy
+        // This allows for flexibility with different key generation methods
+        let member_bytes = hex::decode(member_hex)?;
+        if member_bytes.len() != 32 {
+            return Err("Member hex must decode to 32 bytes".into());
+        }
+        let mut entropy = [0u8; 32];
+        entropy.copy_from_slice(&member_bytes);
 
         let secret = BandersnatchVrfVerifiable::new_secret(entropy);
         let derived_member = BandersnatchVrfVerifiable::member_from_secret(&secret);
