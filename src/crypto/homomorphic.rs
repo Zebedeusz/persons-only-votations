@@ -45,7 +45,6 @@ pub struct PaillierVotingSystem {
 }
 
 impl PaillierVotingSystem {
-    /// Creates a new Paillier voting system with generated keys
     pub fn new() -> Result<Self, HomomorphicError> {
         let (client_key, server_key) =
             gen_keys(tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS);
@@ -55,7 +54,6 @@ impl PaillierVotingSystem {
         })
     }
 
-    /// Encrypts a vote value (0 for Nay, 1 for Yay)
     pub fn encrypt_vote(&self, vote: &VoteType) -> Result<Ciphertext, HomomorphicError> {
         let vote_value = match vote {
             VoteType::Yay => 1u64,
@@ -65,7 +63,6 @@ impl PaillierVotingSystem {
         Ok(self.client_key.encrypt(vote_value))
     }
 
-    /// Computes homomorphic tally of encrypted votes
     pub fn homomorphic_tally(
         &self,
         encrypted_votes: &[Ciphertext],
@@ -74,21 +71,15 @@ impl PaillierVotingSystem {
             return Ok(0);
         }
 
-        // Create a fresh zero to start accumulation
         let mut tally_encrypted = self.client_key.encrypt(0u64);
 
-        // Add each encrypted vote to the tally
         for vote in encrypted_votes {
             tally_encrypted = self.server_key.add(&tally_encrypted, vote);
         }
 
-        // Decrypt the final tally
-        let tally_value = self.client_key.decrypt(&tally_encrypted);
-
-        Ok(tally_value)
+        Ok(self.client_key.decrypt(&tally_encrypted))
     }
 
-    /// Computes homomorphic tally from hex-encoded encrypted votes
     pub fn homomorphic_tally_from_hex(
         &self,
         encrypted_vote_hexes: &[String],
@@ -97,7 +88,6 @@ impl PaillierVotingSystem {
             return Ok(0);
         }
 
-        // Deserialize hex strings to Ciphertext objects
         let mut ciphertexts = Vec::with_capacity(encrypted_vote_hexes.len());
 
         for hex_vote in encrypted_vote_hexes {
@@ -115,7 +105,6 @@ impl PaillierVotingSystem {
         self.homomorphic_tally(&ciphertexts)
     }
 
-    /// Encrypts a vote value and returns hex-encoded ciphertext
     pub fn encrypt_vote_to_hex(&self, vote: &VoteType) -> Result<String, HomomorphicError> {
         let ciphertext = self.encrypt_vote(vote)?;
 
@@ -126,12 +115,10 @@ impl PaillierVotingSystem {
         Ok(hex::encode(serialized))
     }
 
-    /// Gets the public key for encryption
     pub fn get_public_key(&self) -> &ClientKey {
         &self.client_key
     }
 
-    /// Gets the public key serialized as hex for distribution to clients
     pub fn get_public_key_hex(&self) -> Result<String, HomomorphicError> {
         let serialized = bincode::serialize(&self.client_key).map_err(|e| {
             HomomorphicError::KeyGenerationFailed(format!("Failed to serialize client key: {e}"))
@@ -139,8 +126,6 @@ impl PaillierVotingSystem {
         Ok(hex::encode(serialized))
     }
 
-    /// Creates a PaillierVotingSystem from a serialized public key hex
-    /// Note: This only allows encryption, not decryption (no server key)
     pub fn from_public_key_hex(public_key_hex: &str) -> Result<Self, HomomorphicError> {
         let bytes = hex::decode(public_key_hex).map_err(|e| {
             HomomorphicError::KeyGenerationFailed(format!("Invalid hex encoding: {e}"))
@@ -150,8 +135,6 @@ impl PaillierVotingSystem {
             HomomorphicError::KeyGenerationFailed(format!("Failed to deserialize client key: {e}"))
         })?;
 
-        // Create a dummy server key since we only need encryption capability
-        // The server key won't be used for encryption operations
         let dummy_server_key = gen_keys(tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS).1;
 
         Ok(Self {
@@ -160,14 +143,11 @@ impl PaillierVotingSystem {
         })
     }
 
-    /// Test helper: decrypt a ciphertext (for testing only)
     #[cfg(test)]
     pub fn test_decrypt(&self, ciphertext: &Ciphertext) -> u64 {
         self.client_key.decrypt(ciphertext)
     }
 
-    /// Creates a zero-knowledge proof that the encrypted vote is valid (0 or 1)
-    /// Uses Bulletproofs range proof to prove vote ∈ {0,1}
     pub fn create_validity_proof(
         &self,
         vote: &VoteType,
@@ -178,36 +158,27 @@ impl PaillierVotingSystem {
             VoteType::Nay => 0u64,
         };
 
-        // Generate bulletproof generators
         let pc_gens = PedersenGens::default();
         let bp_gens = BulletproofGens::new(64, 1);
-
-        // Create transcript for Fiat-Shamir
         let mut transcript = Transcript::new(b"vote_validity_proof");
 
-        // Generate random blinding factor
         let mut rng = thread_rng();
         let blinding = Scalar::random(&mut rng);
-
-        // Create commitment to vote value
         let commitment = pc_gens.commit(Scalar::from(vote_value), blinding);
 
-        // Create range proof for vote ∈ [0, 255] (using 8 bits minimum for bulletproofs)
         let (proof, _committed_value) = RangeProof::prove_single(
             &bp_gens,
             &pc_gens,
             &mut transcript,
             vote_value,
             &blinding,
-            8, // n_bits = 8, proves value ∈ [0, 2^8) = [0, 256) = {0, 1, ..., 255}
+            8,
         )
         .map_err(|e| HomomorphicError::BulletproofGenerationFailed(format!("{e:?}")))?;
 
-        // Serialize proof and commitment
         let proof_bytes = proof.to_bytes();
         let commitment_bytes = commitment.compress().to_bytes();
 
-        // Combine proof and commitment
         let mut combined = Vec::new();
         combined.extend_from_slice(&proof_bytes);
         combined.extend_from_slice(&commitment_bytes);
@@ -215,16 +186,12 @@ impl PaillierVotingSystem {
         Ok(hex::encode(combined))
     }
 
-    /// Verifies a zero-knowledge proof that an encrypted vote is valid
-    /// Uses Bulletproofs to verify the range proof
     pub fn verify_validity_proof(&self, proof: &str) -> bool {
-        // Decode hex proof
         let combined_bytes = match hex::decode(proof) {
             Ok(bytes) => bytes,
             Err(_) => return false,
         };
 
-        // Split proof and commitment (commitment is last 32 bytes)
         if combined_bytes.len() < 32 {
             return false;
         }
@@ -232,7 +199,6 @@ impl PaillierVotingSystem {
         let commitment_bytes = &combined_bytes[combined_bytes.len() - 32..];
         let proof_bytes = &combined_bytes[..combined_bytes.len() - 32];
 
-        // Deserialize commitment
         if commitment_bytes.len() != 32 {
             return false;
         }
@@ -245,20 +211,15 @@ impl PaillierVotingSystem {
             None => return false,
         };
 
-        // Deserialize proof
         let range_proof = match RangeProof::from_bytes(proof_bytes) {
             Ok(proof) => proof,
             Err(_) => return false,
         };
 
-        // Generate same generators used in proof creation
         let pc_gens = PedersenGens::default();
         let bp_gens = BulletproofGens::new(64, 1);
-
-        // Create transcript for verification
         let mut transcript = Transcript::new(b"vote_validity_proof");
 
-        // Verify the range proof
         range_proof
             .verify_single(
                 &bp_gens,
@@ -270,17 +231,13 @@ impl PaillierVotingSystem {
             .is_ok()
     }
 
-    /// Creates a Pedersen commitment for the encrypted vote
     pub fn create_pedersen_commitment(&self, vote: &VoteType) -> Result<String, HomomorphicError> {
         let vote_value = match vote {
             VoteType::Yay => 1u64,
             VoteType::Nay => 0u64,
         };
 
-        // Generate random blinding factor
         let blinding_factor = fastrand::u64(..);
-
-        // Create commitment (simplified version)
         let commitment_data = format!("pedersen:{vote_value}:{blinding_factor}");
 
         let mut hasher = blake2::Blake2b512::new();
@@ -329,7 +286,7 @@ mod tests {
         ];
 
         let tally = system.homomorphic_tally(&votes).unwrap();
-        assert_eq!(tally, 2); // 1 + 0 + 1 = 2
+        assert_eq!(tally, 2);
     }
 
     #[test]
@@ -353,19 +310,15 @@ mod tests {
             .create_validity_proof(&VoteType::Nay, &nay_encrypted)
             .unwrap();
 
-        // Verify valid proofs
         assert!(system.verify_validity_proof(&yay_proof));
         assert!(system.verify_validity_proof(&nay_proof));
 
-        // Verify invalid proofs fail
         assert!(!system.verify_validity_proof("invalid_proof"));
         assert!(!system.verify_validity_proof("too_short"));
         assert!(!system.verify_validity_proof(""));
 
-        // Verify proofs are different (due to randomness)
         assert_ne!(yay_proof, nay_proof);
 
-        // Verify hex format
         assert!(hex::decode(&yay_proof).is_ok());
         assert!(hex::decode(&nay_proof).is_ok());
     }
@@ -374,7 +327,6 @@ mod tests {
     fn test_bulletproof_range_bounds() {
         let system = PaillierVotingSystem::new().unwrap();
 
-        // Test that proofs are generated correctly for valid vote values
         let yay_encrypted = system.encrypt_vote(&VoteType::Yay).unwrap();
         let nay_encrypted = system.encrypt_vote(&VoteType::Nay).unwrap();
 
@@ -384,7 +336,6 @@ mod tests {
         assert!(yay_proof.is_ok());
         assert!(nay_proof.is_ok());
 
-        // Verify the proofs work
         assert!(system.verify_validity_proof(&yay_proof.unwrap()));
         assert!(system.verify_validity_proof(&nay_proof.unwrap()));
     }
@@ -396,10 +347,7 @@ mod tests {
         let yay_commitment = system.create_pedersen_commitment(&VoteType::Yay).unwrap();
         let nay_commitment = system.create_pedersen_commitment(&VoteType::Nay).unwrap();
 
-        // Commitments should be different (due to random blinding factor)
         assert_ne!(yay_commitment, nay_commitment);
-
-        // Should be valid hex strings of correct length
         assert_eq!(yay_commitment.len(), 64);
         assert_eq!(nay_commitment.len(), 64);
         assert!(hex::decode(&yay_commitment).is_ok());
@@ -413,11 +361,8 @@ mod tests {
         let yay_hex = system.encrypt_vote_to_hex(&VoteType::Yay).unwrap();
         let nay_hex = system.encrypt_vote_to_hex(&VoteType::Nay).unwrap();
 
-        // Should produce valid hex strings
         assert!(hex::decode(&yay_hex).is_ok());
         assert!(hex::decode(&nay_hex).is_ok());
-
-        // Should be different due to encryption randomness
         assert_ne!(yay_hex, nay_hex);
     }
 
@@ -425,16 +370,14 @@ mod tests {
     fn test_homomorphic_tally_from_hex_roundtrip() {
         let system = PaillierVotingSystem::new().unwrap();
 
-        // Create encrypted votes as hex
         let vote_hexes = vec![
             system.encrypt_vote_to_hex(&VoteType::Yay).unwrap(),
             system.encrypt_vote_to_hex(&VoteType::Nay).unwrap(),
             system.encrypt_vote_to_hex(&VoteType::Yay).unwrap(),
         ];
 
-        // Test tally from hex
         let tally = system.homomorphic_tally_from_hex(&vote_hexes).unwrap();
-        assert_eq!(tally, 2); // 1 + 0 + 1 = 2
+        assert_eq!(tally, 2);
     }
 
     #[test]
@@ -460,7 +403,6 @@ mod tests {
     #[test]
     fn test_homomorphic_tally_from_hex_invalid_ciphertext() {
         let system = PaillierVotingSystem::new().unwrap();
-        // Valid hex but invalid ciphertext data
         let invalid_hexes = vec!["deadbeef".to_string()];
 
         let result = system.homomorphic_tally_from_hex(&invalid_hexes);

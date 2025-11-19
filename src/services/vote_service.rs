@@ -322,7 +322,6 @@ impl VoteService {
         Ok((yay_count, nay_count))
     }
 
-    // Encrypted votes voting methods
     pub async fn cast_encrypted_vote(
         &self,
         request: CastEncryptedVoteRequest,
@@ -335,7 +334,6 @@ impl VoteService {
         let current_time = get_current_timestamp()?;
         Self::validate_poll_active(&poll, current_time)?;
 
-        // Check for duplicate vote
         if self
             .vote_repository
             .get_encrypted_vote_by_poll_and_voter(request.poll_id, &request.voter_member_hex)?
@@ -344,7 +342,6 @@ impl VoteService {
             return Err(VoteServiceError::DuplicateVote);
         }
 
-        // Verify personhood
         let person_verified = self
             .chain_client
             .verify_personhood(&request.voter_member_hex, &request.voter_signature)
@@ -356,7 +353,6 @@ impl VoteService {
             ));
         }
 
-        // Create encrypted vote message for signature validation
         let encrypted_vote_message = self.create_encrypted_vote_message(&request, &poll.context)?;
         let signature_valid = self
             .chain_client
@@ -373,7 +369,6 @@ impl VoteService {
             ));
         }
 
-        // Verify validity proof
         if !self
             .paillier_system
             .verify_validity_proof(&request.validity_proof)
@@ -383,7 +378,6 @@ impl VoteService {
             ));
         }
 
-        // Validate ring proof
         let context_bytes = string_to_context(&poll.context)
             .map_err(|e| VoteServiceError::InvalidData(format!("Invalid poll context: {e}")))?;
 
@@ -407,7 +401,6 @@ impl VoteService {
             &encrypted_vote_message,
         )?;
 
-        // Create encrypted vote record
         let encrypted_vote = EncryptedVote {
             poll_id: request.poll_id,
             voter_member_hex: request.voter_member_hex,
@@ -444,7 +437,6 @@ impl VoteService {
 
         let current_time = get_current_timestamp()?;
 
-        // Only allow tally computation after poll ends
         if poll.is_active && current_time <= poll.ends_at {
             return Ok((0, 0));
         }
@@ -455,13 +447,11 @@ impl VoteService {
             return Ok((0, 0));
         }
 
-        // Extract encrypted vote hex strings
         let encrypted_vote_hexes: Vec<String> = encrypted_votes
             .iter()
             .map(|vote| vote.encrypted_vote.clone())
             .collect();
 
-        // Use real homomorphic tally computation
         let total_yay_votes = self
             .paillier_system
             .homomorphic_tally_from_hex(&encrypted_vote_hexes)?;
@@ -493,7 +483,6 @@ impl VoteService {
         Ok(message.as_bytes().to_vec())
     }
 
-    /// Gets the public encryption key for homomorphic voting
     pub fn get_public_encryption_key(&self) -> Result<String> {
         self.paillier_system
             .get_public_key_hex()

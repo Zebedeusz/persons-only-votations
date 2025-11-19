@@ -123,7 +123,6 @@ impl VoteHandler {
         to_json_response(&response)
     }
 
-    // Phase 2: Encrypted voting handlers
     pub async fn cast_encrypted_vote(
         &self,
         poll_id: &str,
