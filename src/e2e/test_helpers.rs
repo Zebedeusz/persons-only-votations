@@ -17,7 +17,73 @@ pub async fn setup_test_environment() -> E2eTestSetup {
         .await
         .expect("Server should be available");
 
+    // Verify required users are registered on the People chain
+    verify_users_registered_on_chain(&setup).await;
+
     setup
+}
+
+/// Verifies that required test users are properly registered on the People chain
+pub async fn verify_users_registered_on_chain(setup: &E2eTestSetup) {
+    use super::utils::TestHelpers;
+
+    let people_client = setup.people_client().expect("People client should be available");
+    let required_user_count = 6; // Ensure we have at least 6 users for homomorphic tests
+
+    // First verify People chain connectivity
+    match people_client.blocks().at_latest().await {
+        Ok(chain_info) => {
+            let block_number = chain_info.header().number;
+            tracing::info!("✅ Connected to People chain at block: {}", block_number);
+            if block_number == 0 {
+                tracing::warn!("⚠️  People chain is at block 0, may not be fully initialized");
+            }
+        }
+        Err(e) => {
+            panic!("❌ Failed to connect to People chain: {}. Ensure the People chain is running and accessible.", e);
+        }
+    }
+
+    for i in 0..required_user_count {
+        if let Some(user) = setup.config.get_recognized_person(i) {
+            // Check if user data is populated (not empty)
+            if user.secret_scalar.is_empty() || user.member_hex.is_empty() || user.member_bytes.is_empty() {
+                panic!("❌ Test user {} has empty credentials. Run the chain setup script to populate user data.", i);
+            }
+
+            // Verify user is actually registered in a ring on the chain
+            match TestHelpers::get_voter_ring_index_from_chain(&user.member_hex, setup).await {
+                Ok(ring_index) => {
+                    tracing::info!("✅ User {} (hex: {}) is registered in ring {}", i, &user.member_hex[0..8], ring_index);
+
+                    // Verify the ring has sufficient members
+                    match TestHelpers::get_ring_keys_from_chain(ring_index, setup).await {
+                        Ok(ring_keys) => {
+                            if ring_keys.len() < 2 {
+                                tracing::warn!("⚠️  Ring {} only has {} members, may affect ring proof generation", ring_index, ring_keys.len());
+                            } else {
+                                tracing::info!("✅ Ring {} has {} members", ring_index, ring_keys.len());
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ Failed to get ring keys for user {} in ring {}: {}", i, ring_index, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    if e.to_string().contains("Person is not included in any ring") {
+                        panic!("❌ Test user {} ({}) is not included in any ring. User may be in onboarding status. Ensure users are properly registered and included in active rings.", i, &user.member_hex[0..8]);
+                    } else {
+                        panic!("❌ Failed to verify ring membership for test user {} ({}): {}. Check People chain setup.", i, &user.member_hex[0..8], e);
+                    }
+                }
+            }
+        } else {
+            panic!("❌ Test user {} not found in configuration. Ensure test_users.json has at least {} users.", i, required_user_count);
+        }
+    }
+
+    tracing::info!("✅ Verified {} test users are properly registered in People chain rings", required_user_count);
 }
 
 pub fn get_test_users(setup: &E2eTestSetup) -> (TestKeyPair, TestKeyPair) {
@@ -215,7 +281,6 @@ pub async fn assert_vote_recorded(setup: &E2eTestSetup, poll_id: &str, expected_
     assert_eq!(updated_poll["name"], expected_poll.title);
 }
 
-
 pub async fn commit_vote(
     setup: &E2eTestSetup,
     poll_id: &str,
@@ -300,8 +365,8 @@ pub async fn wait_for_poll_to_end_and_reveal(
         poll_id,
         reveal_data,
     )
-        .await
-        .expect("Failed to reveal vote");
+    .await
+    .expect("Failed to reveal vote");
 }
 
 pub async fn finalize_poll_and_assert_votes_counted(setup: &E2eTestSetup, poll_id: &str) {
@@ -359,7 +424,7 @@ pub async fn test_onboarding_user_vote_rejection(setup: &E2eTestSetup, poll_id: 
             &onboarding_user.secret_scalar,
             &onboarding_user.member_hex,
         )
-            .expect("Failed to create keypair for onboarding user");
+        .expect("Failed to create keypair for onboarding user");
 
         let onboarding_vote_data_result =
             TestHelpers::create_signed_vote_data_with_real_ring_proof(
@@ -368,7 +433,7 @@ pub async fn test_onboarding_user_vote_rejection(setup: &E2eTestSetup, poll_id: 
                 &onboarding_keypair,
                 setup,
             )
-                .await;
+            .await;
 
         match onboarding_vote_data_result {
             Ok(onboarding_vote_data) => {
@@ -378,7 +443,7 @@ pub async fn test_onboarding_user_vote_rejection(setup: &E2eTestSetup, poll_id: 
                     poll_id,
                     &onboarding_vote_data,
                 )
-                    .await;
+                .await;
 
                 match onboarding_vote_response {
                     Ok(_) => {
@@ -416,7 +481,7 @@ pub fn get_legitimate_and_fake_keypairs(setup: &E2eTestSetup) -> (TestKeyPair, T
         &legitimate_user.secret_scalar,
         &legitimate_user.member_hex,
     )
-        .expect("Failed to create legitimate keypair");
+    .expect("Failed to create legitimate keypair");
 
     let malicious_keypair = TestKeyPair::generate();
     let fake_impersonation_keypair = TestKeyPair {
@@ -460,7 +525,7 @@ pub async fn attempt_malicious_vote(
         fake_keypair,
         setup,
     )
-        .await;
+    .await;
 
     assert!(
         malicious_vote_data_result.is_err(),
@@ -482,8 +547,8 @@ pub async fn verify_legitimate_user_can_vote(
         legitimate_keypair,
         setup,
     )
-        .await
-        .expect("Failed to create vote data with real ring proof");
+    .await
+    .expect("Failed to create vote data with real ring proof");
 
     let legitimate_vote_response = TestHelpers::commit_vote_via_api(
         &setup.http_client,
@@ -491,7 +556,7 @@ pub async fn verify_legitimate_user_can_vote(
         poll_id,
         &legitimate_vote_data,
     )
-        .await;
+    .await;
 
     assert!(
         legitimate_vote_response.is_ok(),

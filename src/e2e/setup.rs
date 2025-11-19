@@ -86,20 +86,29 @@ impl E2eTestSetup {
         let health_endpoint = format!("{}/health", self.config.server_base_url);
         let mut retries = 0;
 
+        tracing::info!("Waiting for server at {}", health_endpoint);
+
         loop {
             match self.http_client.get(&health_endpoint).send().await {
                 Ok(response) if response.status().is_success() => {
                     tracing::info!("Server is ready at {}", self.config.server_base_url);
                     return Ok(());
                 }
-                _ => {
-                    retries += 1;
-                    if retries > 10 {
-                        return Err("Server not available after 10 retries".into());
-                    }
-                    sleep(Duration::from_secs(1)).await;
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    tracing::warn!("Server health check failed (attempt {}): HTTP {} - {}", retries + 1, status, body);
+                }
+                Err(e) => {
+                    tracing::warn!("Server health check error (attempt {}): {}", retries + 1, e);
                 }
             }
+
+            retries += 1;
+            if retries > 10 {
+                return Err(format!("Server not available after {} retries at {}", retries, health_endpoint).into());
+            }
+            sleep(Duration::from_secs(1)).await;
         }
     }
 

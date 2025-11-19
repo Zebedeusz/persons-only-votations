@@ -1,14 +1,49 @@
 # Persons-only Votations
 
+## Project idea
+
+Platform enabling creation, follow-up and management of polls.
+Participants verification done with personhood assurance blockchain system - People Chain.
+To interact with the _People_ chain, subxt library is used.
+
+This is a typical backend application that only communicates
+with the blockchain to verify user's personhood.
+Thus, in order to achieve data persistence with blockchain resilience,
+at least the data layer should be handled on chain.
+
 ## Left To Do
-- make voting more private (ZK?) - so as not to reveal one's vote
-- README update,
 - cleanup - retain only what's necessary,
 - code simplification.
 
 ## Possible Evolutions of this project
 - public and private polls
 - decentralize it - put it on chain (execution, storage)
+
+## Features
+
+### Voting Schemes
+
+The platform supports two complementary voting schemes:
+
+#### 1. Commit-Reveal Voting
+- **Two-phase process**: Voters first commit to their vote (without revealing it), then reveal it in a second phase
+- **Privacy during voting**: Vote choices remain hidden during the commit phase
+- **Prevents vote manipulation**: Commitments are cryptographically binding using Blake2b hashes
+- **Endpoints**: `/polls/:poll_id/commit`, `/polls/:poll_id/reveal`, `/polls/:poll_id/finalize`
+
+#### 2. Homomorphic Encryption Voting
+- **End-to-end privacy**: Votes are encrypted and tallied without decryption
+- **Based on TFHE**: Uses fully homomorphic encryption for secure vote aggregation
+- **Validity proofs**: Bulletproofs ensure votes are valid (0 or 1) without revealing the choice
+- **Endpoints**: `/polls/:poll_id/cast-encrypted`, `/polls/:poll_id/homomorphic-tally`, `/encryption-key`
+
+### Personhood Verification
+
+All votes require proof of personhood verified through the People Chain:
+- **Ring proofs**: Zero-knowledge proofs of ring membership using Bandersnatch cryptography
+- **Anonymous voting**: Voter identity is verified without revealing who voted
+- **Sybil resistance**: Each person can vote only once per poll
+- **Ring context**: Each poll has a separate Bandersnatch Ring context (format: `PERSONS_POLL_{{poll_id}}`)
 
 ## Quick Start
 
@@ -30,91 +65,151 @@ PEOPLE_CHAIN_PROTOCOL=ws
 cargo run
 ```
 
-The server will start on `http://127.0.0.1:3000` by default and automatically connect to the People Chain or fall back to mock mode for development.
+The server will start on `http://127.0.0.1:3000` by default and connect to the People Chain.
 
-## Project idea
+## API Endpoints
 
-Platform enabling creation, follow-up and management of votations/polls.
-Participants verification done with personhood assurance mechanism defined in "_individuality_" project.
-To interact with _People_ chain where the _individuality_ pallets are located, subxt library is used.
+### Poll Management
+- `GET /health` - Health check endpoint
+- `GET /polls` - List all polls
+- `POST /polls` - Create a new poll
+- `GET /polls/:poll_id` - Get poll details
 
-The whole project should have its separate Bandersnatch Ring context prefix.
-Then each votation should have a separate Bandersnatch Ring context, 
-so e.g. a votation's context would be PERSONS_POLL_{{poll_id}} = PERSONS_POLL_123456
-This, in order to ensure a person can vote only once in a votation and that their vote is private.
+### Commit-Reveal Voting
+- `POST /polls/:poll_id/commit` - Commit a vote (phase 1)
+- `POST /polls/:poll_id/reveal` - Reveal a committed vote (phase 2)
+- `POST /polls/:poll_id/finalize` - Finalize poll and tally votes
+- `GET /polls/:poll_id/votes` - Get all votes for a poll
 
-Technically, this is a typical backend application that only communicates 
-with the blockchain to verify user's personhood.
-Thus, in order to achieve data persistence with blockchain resilience, 
-at least the data layer should be handled by a polkadot-sdk pallet.
-
-## API
-
-HTTP REST.
-
-User managements necessary (login etc, my_polls, my_votes) - or maybe can be done with smth like "login with Bandersnatch blockchain key"?
-
-- POST create_poll(creator_public_key, creator_signature, poll_data)
-  - Flow:
-  1. Check signature
-  2. Check creator personhood
-  3. Basic poll validation
-  4. Create a separate context for the poll
-  5. Persist poll data
-- POST vote(voter_public_key, voter_signature, vote)
-  1. Check signature
-  2. Check voter personhood
-  3. Basic validation (poll exists, is not finished etc)
-  4. Cast the vote (modify poll's tally, mark the person as voted; persist all that)
-- GET my_polls
-- GET my_votes
-
-## Data Model
-
-```rust
-struct Poll { // only simple majority supported
-    id: u32,
-    public: bool, // if true, all users can vote; if false, the creator has to specify which users can vote or invite them
-    name: String,
-    description: String,
-    tally: Tally,
-    created_at: Timestamp,
-    ends_at: Timestamp,
-    context: String,
-}
-```
-
-```rust
-struct Tally {}
-```
-
-```rust
-struct Vote {
-    poll_id: u32,
-    user_id: u32, // or user_key?
-    vote_type: VoteType,
-}
-```
-
-```rust
-enum VoteType {
-    Yay,
-    Nay,
-}
-
-```
+### Homomorphic Encryption Voting
+- `GET /encryption-key` - Get public encryption key
+- `POST /polls/:poll_id/cast-encrypted` - Cast an encrypted vote
+- `GET /polls/:poll_id/encrypted-votes` - Get all encrypted votes
+- `GET /polls/:poll_id/homomorphic-tally` - Get homomorphic tally results
 
 ## E2E Tests
 
-In order to run E2E tests:
-- run a local node of people chain
-- specify the node's address in the config
-- run the server
-- run the tests.
+This repository includes everything needed to run E2E tests.
 
-## Running the server
+### Quick Start (Automated)
 
-In order to start the server:
-- run a local node of people chain
-- specify the node's address in the config
-- run the server.
+Run the complete E2E test suite with a single command:
+
+```bash
+./devtools/scripts/run-e2e.sh
+```
+
+This will automatically:
+1. Build the People Rococo runtime with test configuration
+2. Set up and start a local zombienet network
+3. Generate test users on the People chain
+4. Start the application server
+5. Run all E2E tests
+6. Clean up
+
+### Prerequisites
+
+**Required Tools:**
+- [Rust toolchain](https://rustup.rs/)
+- [Zombienet CLI](https://github.com/paritytech/zombienet)
+- [subxt CLI](https://github.com/paritytech/subxt): `cargo install subxt-cli`
+
+**Required Binaries in PATH:**
+
+The following binaries must be accessible in your system PATH:
+- `polkadot`
+- `polkadot-parachain`
+- `polkadot-execute-worker`
+- `polkadot-prepare-worker`
+
+**Quick setup if you have binaries in a directory:**
+```bash
+# Add to ~/.zshrc or ~/.bashrc
+export PATH="/path/to/your/binaries:$PATH"
+source ~/.zshrc
+```
+
+See `devtools/zombienet/binaries/README.md` for detailed setup instructions.
+
+### Step-by-Step Manual Workflow
+
+If you prefer to run steps individually:
+
+#### 1. Build the Test Runtime
+```bash
+./devtools/scripts/build-runtime.sh
+```
+
+Builds People Rococo runtime with `MaxRingSize=2` and `OnboardingQueuePageSize=2`.
+
+#### 2. Start the Network
+```bash
+./devtools/scripts/setup-network.sh
+```
+
+Starts a local zombienet network with:
+- Rococo relay chain
+- People parachain (port 9910)
+
+#### 3. Generate Test Users
+```bash
+./devtools/scripts/generate-test-users.sh
+```
+
+Generates test users and registers them on the People chain. Output: `src/e2e/test_users.json`
+
+#### 4. Run Tests
+```bash
+cargo test e2e
+```
+
+### Advanced Options
+
+**Run tests with debug logging:**
+```bash
+RUST_LOG=debug cargo test e2e -- --nocapture
+```
+
+**Run specific tests:**
+```bash
+# Test poll creation and voting with identity proofs
+cargo test test_recognized_users_poll_creation_and_voting -- --nocapture
+
+# Test basic poll operations
+cargo test e2e::tests::test_basic_poll_creation_and_retrieval -- --nocapture
+
+# Test homomorphic encryption
+cargo test e2e::homomorphic_tests -- --nocapture
+```
+
+**Customize test user generation:**
+```bash
+./devtools/scripts/generate-test-users.sh --recognized 10 --onboarding 2
+```
+
+**Leave network running after tests:**
+```bash
+./devtools/scripts/run-e2e.sh --no-cleanup
+```
+
+**Run tests against existing network:**
+```bash
+./devtools/scripts/run-e2e.sh --skip-runtime-build --skip-network --skip-users
+```
+
+### Repository Structure
+
+```
+devtools/
+├── runtime/              # Test runtime artifacts
+├── zombienet/            # Network configuration and binaries
+│   ├── binaries/         # Node executables
+│   ├── small_network.toml
+│   └── *-chain-spec.json
+├── test-users-generator/ # Tool to generate test users
+└── scripts/              # Automation scripts
+    ├── build-runtime.sh
+    ├── setup-network.sh
+    ├── generate-test-users.sh
+    └── run-e2e.sh
+```

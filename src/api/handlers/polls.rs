@@ -25,9 +25,7 @@ impl From<PollServiceError> for ApiError {
             PollServiceError::RepositoryError(e) => {
                 ApiError::InternalError(format!("Storage error: {e}"))
             }
-            PollServiceError::SystemTimeError => {
-                ApiError::InternalError("System time error".to_string())
-            }
+            PollServiceError::TimeError(e) => ApiError::InternalError(format!("Time error: {e}")),
         }
     }
 }

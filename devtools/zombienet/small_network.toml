@@ -1,0 +1,25 @@
+[relaychain]
+default_command = "polkadot"
+chain = "rococo-local"
+
+  [[relaychain.nodes]]
+  name = "alice"
+  validator = true
+  rpc_port = 9900
+  args = ["-lxcm=trace"]
+
+  [[relaychain.nodes]]
+  name = "bob"
+  validator = true
+
+[[parachains]]
+id = 1004
+cumulus_based = true
+chain_spec_path = "./people-chain-spec.json"
+
+  [[parachains.collators]]
+  name = "charlie"
+  validator = true
+  rpc_port = 9910
+  command = "polkadot-parachain"
+  args = ["-lxcm=trace", "--force-authoring", "--enable-statement-store"]

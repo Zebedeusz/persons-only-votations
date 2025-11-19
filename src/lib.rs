@@ -4,6 +4,7 @@ pub mod config;
 pub mod crypto;
 pub mod services;
 pub mod storage;
+pub mod utils;
 
 #[cfg(test)]
 pub mod e2e;
