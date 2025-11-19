@@ -2,13 +2,9 @@
 
 ## Project idea
 
-Platform enabling creation, follow-up and management of votations/polls.
+Platform enabling creation, follow-up and management of polls.
 Participants verification done with personhood assurance blockchain system - People Chain.
 To interact with the _People_ chain, subxt library is used.
-
-The whole project should have its separate Bandersnatch Ring context prefix.
-Then each votation should have a separate Bandersnatch Ring context,
-so e.g. a votation's context would be PERSONS_POLL_{{poll_id}} = PERSONS_POLL_123456
 
 This is a typical backend application that only communicates
 with the blockchain to verify user's personhood.
@@ -22,6 +18,32 @@ at least the data layer should be handled on chain.
 ## Possible Evolutions of this project
 - public and private polls
 - decentralize it - put it on chain (execution, storage)
+
+## Features
+
+### Voting Schemes
+
+The platform supports two complementary voting schemes:
+
+#### 1. Commit-Reveal Voting
+- **Two-phase process**: Voters first commit to their vote (without revealing it), then reveal it in a second phase
+- **Privacy during voting**: Vote choices remain hidden during the commit phase
+- **Prevents vote manipulation**: Commitments are cryptographically binding using Blake2b hashes
+- **Endpoints**: `/polls/:poll_id/commit`, `/polls/:poll_id/reveal`, `/polls/:poll_id/finalize`
+
+#### 2. Homomorphic Encryption Voting
+- **End-to-end privacy**: Votes are encrypted and tallied without decryption
+- **Based on TFHE**: Uses fully homomorphic encryption for secure vote aggregation
+- **Validity proofs**: Bulletproofs ensure votes are valid (0 or 1) without revealing the choice
+- **Endpoints**: `/polls/:poll_id/cast-encrypted`, `/polls/:poll_id/homomorphic-tally`, `/encryption-key`
+
+### Personhood Verification
+
+All votes require proof of personhood verified through the People Chain:
+- **Ring proofs**: Zero-knowledge proofs of ring membership using Bandersnatch cryptography
+- **Anonymous voting**: Voter identity is verified without revealing who voted
+- **Sybil resistance**: Each person can vote only once per poll
+- **Ring context**: Each poll has a separate Bandersnatch Ring context (format: `PERSONS_POLL_{{poll_id}}`)
 
 ## Quick Start
 
@@ -43,7 +65,27 @@ PEOPLE_CHAIN_PROTOCOL=ws
 cargo run
 ```
 
-The server will start on `http://127.0.0.1:3000` by default and automatically connect to the People Chain or fall back to mock mode for development.
+The server will start on `http://127.0.0.1:3000` by default and connect to the People Chain.
+
+## API Endpoints
+
+### Poll Management
+- `GET /health` - Health check endpoint
+- `GET /polls` - List all polls
+- `POST /polls` - Create a new poll
+- `GET /polls/:poll_id` - Get poll details
+
+### Commit-Reveal Voting
+- `POST /polls/:poll_id/commit` - Commit a vote (phase 1)
+- `POST /polls/:poll_id/reveal` - Reveal a committed vote (phase 2)
+- `POST /polls/:poll_id/finalize` - Finalize poll and tally votes
+- `GET /polls/:poll_id/votes` - Get all votes for a poll
+
+### Homomorphic Encryption Voting
+- `GET /encryption-key` - Get public encryption key
+- `POST /polls/:poll_id/cast-encrypted` - Cast an encrypted vote
+- `GET /polls/:poll_id/encrypted-votes` - Get all encrypted votes
+- `GET /polls/:poll_id/homomorphic-tally` - Get homomorphic tally results
 
 ## E2E Tests
 
@@ -171,10 +213,3 @@ devtools/
     ├── generate-test-users.sh
     └── run-e2e.sh
 ```
-
-## Running the server
-
-In order to start the server:
-- run a local node of people chain
-- specify the node's address in the config
-- run the server.
