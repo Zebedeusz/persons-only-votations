@@ -1,1 +1,28 @@
+# Build artifacts
 /target
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Server logs
+server.log
+
+# E2E test artifacts
+devtools/runtime/*.wasm
+devtools/zombienet/zombienet.log
+devtools/zombienet/*-chain-spec.json
+devtools/test-users-generator/target/
+devtools/test-users-generator/people-metadata.scale
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -47,53 +47,129 @@ The server will start on `http://127.0.0.1:3000` by default and automatically co
 
 ## E2E Tests
 
+This repository includes everything needed to run E2E tests.
+
+### Quick Start (Automated)
+
+Run the complete E2E test suite with a single command:
+
+```bash
+./devtools/scripts/run-e2e.sh
+```
+
+This will automatically:
+1. Build the People Rococo runtime with test configuration
+2. Set up and start a local zombienet network
+3. Generate test users on the People chain
+4. Start the application server
+5. Run all E2E tests
+6. Clean up
+
 ### Prerequisites
-1. Start a local People chain node
-2. Test users must be registered and included in active rings (not just onboarding)
 
-### Running E2E Tests
+**Required Tools:**
+- [Rust toolchain](https://rustup.rs/)
+- [Zombienet CLI](https://github.com/paritytech/zombienet)
+- [subxt CLI](https://github.com/paritytech/subxt): `cargo install subxt-cli`
 
-1. Runtime configured with people pallet as:
-    ```rust
-        type MaxRingSize = ConstU32<2>;
-        type OnboardingQueuePageSize = ConstU32<2>;
-    ```
-2. Build the runtime
-`cargo build --release -p people-rococo-runtime`
-3. Run the node
-`zombienet_stuff % zombienet -p native spawn ../individuality/runtimes/people-rococo/zombienet/small_network.toml`
-4. Read the port at which Charlie operates and use it later as node port - modify registration script, .env and .env.e2e
-5. Register test users
-`people_tests in send-tx`
-6. Make sure all users were registered
-7. Run the server
-`cargo run`
-8. Modify test_users.json as per the output of registration script
-9. Run the tests
-`cargo test e2e`
+**Required Binaries in PATH:**
 
-**Standard E2E tests:**
+The following binaries must be accessible in your system PATH:
+- `polkadot`
+- `polkadot-parachain`
+- `polkadot-execute-worker`
+- `polkadot-prepare-worker`
+
+**Quick setup if you have binaries in a directory:**
+```bash
+# Add to ~/.zshrc or ~/.bashrc
+export PATH="/path/to/your/binaries:$PATH"
+source ~/.zshrc
+```
+
+See `devtools/zombienet/binaries/README.md` for detailed setup instructions.
+
+### Step-by-Step Manual Workflow
+
+If you prefer to run steps individually:
+
+#### 1. Build the Test Runtime
+```bash
+./devtools/scripts/build-runtime.sh
+```
+
+Builds People Rococo runtime with `MaxRingSize=2` and `OnboardingQueuePageSize=2`.
+
+#### 2. Start the Network
+```bash
+./devtools/scripts/setup-network.sh
+```
+
+Starts a local zombienet network with:
+- Rococo relay chain
+- People parachain (port 9910)
+
+#### 3. Generate Test Users
+```bash
+./devtools/scripts/generate-test-users.sh
+```
+
+Generates test users and registers them on the People chain. Output: `src/e2e/test_users.json`
+
+#### 4. Run Tests
 ```bash
 cargo test e2e
 ```
 
-**With custom People chain endpoint:**
-```bash
-E2E_PEOPLE_CHAIN_ENDPOINT=ws://127.0.0.1:9944 cargo test e2e
-```
+### Advanced Options
 
-**With debug logging:**
+**Run tests with debug logging:**
 ```bash
 RUST_LOG=debug cargo test e2e -- --nocapture
 ```
 
-**Specific tests:**
+**Run specific tests:**
 ```bash
 # Test poll creation and voting with identity proofs
-RUST_LOG=debug cargo test test_recognized_users_poll_creation_and_voting -- --nocapture
+cargo test test_recognized_users_poll_creation_and_voting -- --nocapture
 
 # Test basic poll operations
-RUST_LOG=debug cargo test e2e::tests::test_basic_poll_creation_and_retrieval -- --nocapture
+cargo test e2e::tests::test_basic_poll_creation_and_retrieval -- --nocapture
+
+# Test homomorphic encryption
+cargo test e2e::homomorphic_tests -- --nocapture
+```
+
+**Customize test user generation:**
+```bash
+./devtools/scripts/generate-test-users.sh --recognized 10 --onboarding 2
+```
+
+**Leave network running after tests:**
+```bash
+./devtools/scripts/run-e2e.sh --no-cleanup
+```
+
+**Run tests against existing network:**
+```bash
+./devtools/scripts/run-e2e.sh --skip-runtime-build --skip-network --skip-users
+```
+
+### Repository Structure
+
+```
+devtools/
+├── runtime/              # Test runtime artifacts
+├── zombienet/            # Network configuration and binaries
+│   ├── binaries/         # Node executables
+│   ├── small_network.toml
+│   └── *-chain-spec.json
+├── test-users-generator/ # Tool to generate test users
+└── scripts/              # Automation scripts
+    ├── build-runtime.sh
+    ├── setup-network.sh
+    ├── generate-test-users.sh
+    └── run-e2e.sh
 ```
 
 ## Running the server
