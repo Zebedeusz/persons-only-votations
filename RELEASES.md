@@ -1,5 +1,14 @@
 # Release History
 
+## v3.0.0
+
+### Description
+Homomorphic encryption voting scheme:
+- Votes remain encrypted throughout the entire tallying process
+- Validity proofs ensure encrypted votes contain valid choices (0 or 1)
+
+Personhood verification as previously.
+
 ## v2.0.0
 
 ### Description
