@@ -166,15 +166,12 @@ fi
 # Update .env.e2e with detected port
 ENV_E2E="$PROJECT_ROOT/.env.e2e"
 
-if [ -f "$ENV_E2E" ]; then
-    # Update existing file
-    sed -i.bak "s/E2E_PEOPLE_CHAIN_ENDPOINT=.*/E2E_PEOPLE_CHAIN_ENDPOINT=ws:\/\/127.0.0.1:$CHARLIE_PORT/" "$ENV_E2E"
-    sed -i.bak "s/PEOPLE_CHAIN_PORT=.*/PEOPLE_CHAIN_PORT=$CHARLIE_PORT/" "$ENV_E2E"
-    rm -f "$ENV_E2E.bak"
-    echo -e "${GREEN}✓ Updated $ENV_E2E${NC}"
-else
-    echo -e "${YELLOW}⚠ .env.e2e not found, skipping update${NC}"
-fi
+# .env.e2e is gitignored; created from the tracked template on first run
+[ -f "$ENV_E2E" ] || cp "$ENV_E2E.example" "$ENV_E2E"
+sed -i.bak "s/E2E_PEOPLE_CHAIN_ENDPOINT=.*/E2E_PEOPLE_CHAIN_ENDPOINT=ws:\/\/127.0.0.1:$CHARLIE_PORT/" "$ENV_E2E"
+sed -i.bak "s/PEOPLE_CHAIN_PORT=.*/PEOPLE_CHAIN_PORT=$CHARLIE_PORT/" "$ENV_E2E"
+rm -f "$ENV_E2E.bak"
+echo -e "${GREEN}✓ Updated $ENV_E2E${NC}"
 
 # Show network status
 echo ""

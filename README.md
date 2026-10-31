@@ -119,5 +119,5 @@ RUST_LOG=debug cargo test e2e -- --nocapture                                # ve
 cargo test test_recognized_users_poll_creation_and_voting -- --nocapture    # a single test
 ```
 
-The chain port is assigned by zombienet and written to `.env.e2e` by `setup-network.sh`; the
+The chain port is assigned by zombienet and written to `.env.e2e` (created from `.env.e2e.example`) by `setup-network.sh`; the
 server reads the same file when started by `run-e2e.sh`.

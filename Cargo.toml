@@ -1,6 +1,6 @@
 [package]
 name = "persons-only-votations"
-version = "0.1.0"
+version = "3.1.0"
 edition = "2024"
 
 [dependencies]
@@ -23,7 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 fastrand = "2.0"
 verifiable = { version = "0.2.0", features = ["small-ring", "std"] }
 rand = { version = "0.8", features = ["std"] }
-tfhe = { version = "0.5", features = ["boolean", "shortint"] }
+tfhe = { version = "0.5", features = ["boolean", "shortint", "seeder_unix"] }
 bincode = "1.3"
 
 [dev-dependencies]
