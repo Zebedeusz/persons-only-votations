@@ -12,26 +12,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEVTOOLS_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_ROOT="$(dirname "$DEVTOOLS_DIR")"
 ZOMBIENET_DIR="$DEVTOOLS_DIR/zombienet"
-BINARIES_DIR="$ZOMBIENET_DIR/binaries"
 INDIVIDUALITY_DIR="${INDIVIDUALITY_DIR:-$(dirname "$PROJECT_ROOT")/individuality}"
 
 echo -e "${GREEN}Setting up E2E Test Network${NC}"
 echo "==========================================="
-
-# Parse command line arguments
-DOWNLOAD_BINARIES=false
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --download-binaries)
-            DOWNLOAD_BINARIES=true
-            shift
-            ;;
-        *)
-            echo -e "${RED}Unknown option: $1${NC}"
-            exit 1
-            ;;
-    esac
-done
 
 # Check for zombienet
 if ! command -v zombienet &> /dev/null; then
@@ -106,21 +90,18 @@ if [ ! -f "$CUSTOM_RUNTIME" ]; then
     exit 1
 fi
 
-chain-spec-builder \
+if ! chain-spec-builder \
     -c "$PEOPLE_CHAIN_SPEC" \
     create \
     --para-id 1004 \
     --relay-chain rococo-local \
     -t development \
     --runtime "$CUSTOM_RUNTIME" \
-    named-preset development
-
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ People chain spec generated from custom runtime${NC}"
-else
+    named-preset development; then
     echo -e "${RED}✗ Chain spec generation failed${NC}"
     exit 1
 fi
+echo -e "${GREEN}✓ People chain spec generated from custom runtime${NC}"
 
 # Start zombienet
 echo -e "${YELLOW}Starting zombienet network...${NC}"

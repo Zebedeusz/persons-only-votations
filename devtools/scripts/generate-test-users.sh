@@ -85,11 +85,6 @@ echo -e "${YELLOW}Building test users generator...${NC}"
 cd "$GENERATOR_DIR"
 cargo build --release --quiet
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}✗ Build failed${NC}"
-    exit 1
-fi
-
 echo -e "${GREEN}✓ Generator built${NC}"
 
 # Run the generator
@@ -110,7 +105,6 @@ echo -e "==========================================${NC}"
 echo -e "Output: ${BLUE}$PROJECT_ROOT/src/e2e/test_users.json${NC}"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
-echo "  1. Manually trigger onboarding and ring building on the chain"
-echo "  2. Or wait for automatic processing"
-echo "  3. Run e2e tests: cargo test e2e"
+echo "  1. Wait for the chain to include the users in rings (a few blocks)"
+echo "  2. Run e2e tests: cargo test e2e"
 echo -e "${GREEN}==========================================${NC}"

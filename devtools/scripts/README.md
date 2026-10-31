@@ -29,7 +29,7 @@ Builds the People Rococo runtime with e2e test configuration.
 ```
 
 **Environment Variables:**
-- `INDIVIDUALITY_DIR` - Path to individuality repository (default: `../devtools/.cache/individuality`)
+- `INDIVIDUALITY_DIR` - Path to individuality repository (default: `../individuality`, a sibling of the project)
 - `UPDATE_REPO` - Set to `true` to update the repository before building
 
 **What it does:**
@@ -50,25 +50,23 @@ Sets up and starts the zombienet test network.
 
 **Usage:**
 ```bash
-./setup-network.sh [--download-binaries]
+./setup-network.sh
 ```
-
-**Options:**
-- `--download-binaries` - Attempt to download required binaries (not yet implemented)
 
 **Requirements:**
 - `zombienet` CLI tool
-- Node binaries in `devtools/zombienet/binaries/`:
+- `chain-spec-builder` (`cargo install staging-chain-spec-builder`)
+- Node binaries in `PATH`:
   - `polkadot`
   - `polkadot-parachain`
   - `polkadot-execute-worker`
   - `polkadot-prepare-worker`
 
 **What it does:**
-1. Validates required binaries are present
-2. Copies chain specifications from individuality repo
+1. Validates required binaries are in `PATH`
+2. Generates the People chain spec from `devtools/runtime/people_rococo_runtime.wasm`
 3. Starts zombienet network in the background
-4. Detects Charlie's WebSocket port
+4. Detects Charlie's WebSocket port (assigned by zombienet)
 5. Updates `.env.e2e` with detected port
 
 **Output:**
@@ -99,13 +97,12 @@ Generates test users on the running People chain.
 - Rust toolchain for building the generator
 
 **What it does:**
-1. Checks chain connectivity
-2. Generates/validates chain metadata
-3. Builds the test-users-generator tool
-4. Reserves personal IDs on chain
-5. Generates Bandersnatch key pairs
-6. Recognizes personhood via DummyDim pallet
-7. Writes output to `src/e2e/test_users.json`
+1. Fetches chain metadata if not cached
+2. Builds the test-users-generator tool
+3. Reserves personal IDs on chain
+4. Generates Bandersnatch key pairs
+5. Recognizes personhood via DummyDim pallet
+6. Writes output to `src/e2e/test_users.json`
 
 **Output:**
 - `src/e2e/test_users.json` with test user keys
@@ -163,14 +160,14 @@ tail -f devtools/zombienet/zombienet.log
 ```
 
 Common issues:
-- Missing binaries in `devtools/zombienet/binaries/`
-- Port conflicts (9900, 9910, 9920 must be free)
-- Incorrect chain specifications
+- Missing binaries in `PATH`
+- Port 9900 in use
+- `chain-spec-builder` missing or runtime WASM not built
 
 ### Test user generation fails
 
 - Ensure network is running: `ps aux | grep zombienet`
-- Check chain connectivity: `curl -X POST http://127.0.0.1:9910 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}'`
+- Check chain connectivity at the port written to `.env.e2e`: `curl -X POST http://127.0.0.1:<port> -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}'`
 - Verify DummyDim pallet is available in the runtime
 
 ### Tests fail with ring proof errors

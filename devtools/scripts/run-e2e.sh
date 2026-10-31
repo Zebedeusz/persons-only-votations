@@ -74,7 +74,7 @@ cleanup() {
         echo -e "${GREEN}✓ Network stopped${NC}"
     else
         echo ""
-        echo -e "${YELLOW}Network left running (use --no-cleanup flag removed)${NC}"
+        echo -e "${YELLOW}Network left running${NC}"
         echo -e "${YELLOW}To stop: pkill -f zombienet${NC}"
     fi
 }

@@ -60,11 +60,9 @@ echo -e "${GREEN}✓ Configuration patched${NC}"
 # Build the runtime
 echo -e "${YELLOW}Building runtime (this may take a while)...${NC}"
 
-(cd "$INDIVIDUALITY_DIR" && cargo build --release -p people-rococo-runtime)
-
-if [ $? -ne 0 ]; then
+# Under set -e a failed build would exit before restoring the patched source
+if ! (cd "$INDIVIDUALITY_DIR" && cargo build --release -p people-rococo-runtime); then
     echo -e "${RED}✗ Build failed${NC}"
-    # Restore original configuration
     mv "$PEOPLE_RS.backup" "$PEOPLE_RS"
     exit 1
 fi
@@ -96,16 +94,14 @@ if ! command -v chain-spec-builder &> /dev/null; then
     echo -e "${YELLOW}⚠ The setup-network.sh script will generate it instead${NC}"
 else
     # Generate chain spec using chain-spec-builder with our custom runtime
-    chain-spec-builder \
+    if chain-spec-builder \
         -c "$CHAIN_SPEC_OUTPUT" \
         create \
         --para-id 1004 \
         --relay-chain rococo-local \
         -t development \
         --runtime "$WASM_DEST" \
-        named-preset development
-
-    if [ $? -eq 0 ]; then
+        named-preset development; then
         echo -e "${GREEN}✓ Chain spec generated at $CHAIN_SPEC_OUTPUT${NC}"
     else
         echo -e "${YELLOW}⚠ Chain spec generation failed${NC}"
