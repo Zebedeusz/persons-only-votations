@@ -13,19 +13,6 @@ use std::collections::HashMap;
 pub struct TestPoll {
     pub title: String,
     pub description: String,
-    pub options: Vec<String>,
-    pub required_identity_proof: bool,
-}
-
-impl Default for TestPoll {
-    fn default() -> Self {
-        Self {
-            title: "Test Poll".to_string(),
-            description: "A test poll for e2e testing".to_string(),
-            options: vec!["Option A".to_string(), "Option B".to_string()],
-            required_identity_proof: true,
-        }
-    }
 }
 
 impl TestPoll {

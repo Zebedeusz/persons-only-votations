@@ -86,6 +86,34 @@ pub async fn verify_users_registered_on_chain(setup: &E2eTestSetup) {
     tracing::info!("✅ Verified {} test users are properly registered in People chain rings", required_user_count);
 }
 
+/// Keypair of the recognized test user at `index` in test_users.json.
+pub fn recognized_keypair(setup: &E2eTestSetup, index: usize) -> TestKeyPair {
+    let user = setup
+        .config
+        .get_recognized_person(index)
+        .unwrap_or_else(|| panic!("Need recognized user at index {index}"));
+    TestKeyPair::from_secret_scalar(&user.secret_scalar, &user.member_hex)
+        .expect("Failed to create keypair")
+}
+
+/// Real ring proof for `voter` over `message`, built from the voter's ring on chain.
+pub async fn ring_proof_for(
+    setup: &E2eTestSetup,
+    voter: &TestKeyPair,
+    context: &[u8; 32],
+    message: &[u8],
+) -> String {
+    let ring_index = TestHelpers::get_voter_ring_index_from_chain(&voter.member_hex, setup)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to get ring index for voter: {e}"));
+    let ring_keys = TestHelpers::get_ring_keys_from_chain(ring_index, setup)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to get ring keys for ring {ring_index}: {e}"));
+    voter
+        .generate_ring_proof(ring_keys.into_iter(), context, message)
+        .unwrap_or_else(|e| panic!("Ring proof generation failed: {e}"))
+}
+
 pub fn get_test_users(setup: &E2eTestSetup) -> (TestKeyPair, TestKeyPair) {
     let creator_user = setup
         .config
@@ -110,8 +138,6 @@ pub fn prepare_voting_poll_data() -> TestPoll {
     TestPoll {
         title: "Voting Test Poll".to_string(),
         description: "Testing voting without identity proof".to_string(),
-        options: vec!["Option A".to_string(), "Option B".to_string()],
-        required_identity_proof: false,
     }
 }
 
@@ -119,8 +145,6 @@ pub fn prepare_recognized_users_poll_data() -> TestPoll {
     TestPoll {
         title: "Recognized Users Poll".to_string(),
         description: "Testing poll creation and voting with recognized users".to_string(),
-        options: vec!["Yes".to_string(), "No".to_string()],
-        required_identity_proof: true,
     }
 }
 
@@ -128,8 +152,6 @@ pub fn prepare_impersonation_test_poll_data() -> TestPoll {
     TestPoll {
         title: "Malicious Impersonation Poll".to_string(),
         description: "This poll should fail to be created due to signature mismatch".to_string(),
-        options: vec!["Yes".to_string(), "No".to_string()],
-        required_identity_proof: false,
     }
 }
 

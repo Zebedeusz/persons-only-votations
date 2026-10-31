@@ -166,7 +166,7 @@ impl VoteHandler {
         let public_key = self.vote_service.get_public_encryption_key()?;
         let response = serde_json::json!({
             "public_key": public_key,
-            "key_type": "tfhe_client_key"
+            "key_type": "tfhe_compact_public_key"
         });
         to_json_response(&response)
     }

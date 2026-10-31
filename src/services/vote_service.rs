@@ -1,7 +1,7 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
 use crate::crypto::commitments::{hex_to_commitment, hex_to_nonce, verify_commitment};
 use crate::crypto::contexts::string_to_context;
-use crate::crypto::homomorphic::{HomomorphicError, PaillierVotingSystem};
+use crate::crypto::homomorphic::{HomomorphicError, TfheVotingSystem};
 use crate::crypto::ring_proof::{RingProofError, validate_ring_proof};
 use crate::storage::models::poll::Poll;
 use crate::storage::models::vote::{
@@ -54,7 +54,7 @@ pub struct VoteService {
     vote_repository: Arc<dyn VoteRepository>,
     poll_repository: Arc<dyn Repository>,
     chain_client: Arc<dyn ChainClient>,
-    paillier_system: PaillierVotingSystem,
+    tfhe: TfheVotingSystem,
 }
 
 impl VoteService {
@@ -67,7 +67,7 @@ impl VoteService {
             vote_repository,
             poll_repository,
             chain_client,
-            paillier_system: PaillierVotingSystem::new().expect("Failed to create Paillier system"),
+            tfhe: TfheVotingSystem::new(),
         }
     }
 
@@ -353,6 +353,12 @@ impl VoteService {
             ));
         }
 
+        // Rejecting ballots that are not ciphertexts under the server key before any chain work
+        let _ = self
+            .tfhe
+            .decode_ciphertext(&request.encrypted_vote)
+            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid encrypted vote: {e}")))?;
+
         let encrypted_vote_message = self.create_encrypted_vote_message(&request, &poll.context)?;
         let signature_valid = self
             .chain_client
@@ -366,15 +372,6 @@ impl VoteService {
         if !signature_valid {
             return Err(VoteServiceError::AuthorizationFailed(
                 "Invalid encrypted vote signature".to_string(),
-            ));
-        }
-
-        if !self
-            .paillier_system
-            .verify_validity_proof(&request.validity_proof)
-        {
-            return Err(VoteServiceError::AuthorizationFailed(
-                "Invalid vote validity proof".to_string(),
             ));
         }
 
@@ -406,8 +403,6 @@ impl VoteService {
             voter_member_hex: request.voter_member_hex,
             voter_alias,
             encrypted_vote: request.encrypted_vote,
-            vote_commitment: request.vote_commitment,
-            validity_proof: request.validity_proof,
             ring_proof: request.ring_proof,
             voter_signature: request.voter_signature,
             created_at: current_time,
@@ -447,18 +442,13 @@ impl VoteService {
             return Ok((0, 0));
         }
 
-        let encrypted_vote_hexes: Vec<String> = encrypted_votes
+        let ciphertexts = encrypted_votes
             .iter()
-            .map(|vote| vote.encrypted_vote.clone())
-            .collect();
+            .map(|vote| self.tfhe.decode_ciphertext(&vote.encrypted_vote))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        let total_yay_votes = self
-            .paillier_system
-            .homomorphic_tally_from_hex(&encrypted_vote_hexes)?;
-
-        let total_votes = encrypted_votes.len() as u64;
-        let yay_count = total_yay_votes;
-        let nay_count = total_votes.saturating_sub(yay_count);
+        let yay_count = self.tfhe.tally(&ciphertexts);
+        let nay_count = (encrypted_votes.len() as u64).saturating_sub(yay_count);
 
         Ok((yay_count, nay_count))
     }
@@ -471,8 +461,6 @@ impl VoteService {
         let vote_data = serde_json::json!({
             "poll_id": request.poll_id,
             "encrypted_vote": request.encrypted_vote,
-            "vote_commitment": request.vote_commitment,
-            "validity_proof": request.validity_proof,
             "context": poll_context
         });
 
@@ -484,8 +472,6 @@ impl VoteService {
     }
 
     pub fn get_public_encryption_key(&self) -> Result<String> {
-        self.paillier_system
-            .get_public_key_hex()
-            .map_err(VoteServiceError::HomomorphicError)
+        Ok(self.tfhe.public_key_hex()?)
     }
 }
