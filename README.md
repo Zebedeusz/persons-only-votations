@@ -1,215 +1,123 @@
 # Persons-only Votations
 
-## Project idea
+HTTP backend for yes/no polls where only verified persons can create polls and vote. Personhood is
+proven against the Polkadot **People chain**; this service never holds identities of its own, it
+only checks what the chain says. A voter stays anonymous towards the poll but can vote once per
+poll, enforced through ring VRF aliases.
 
-Platform enabling creation, follow-up and management of polls.
-Participants verification done with personhood assurance blockchain system - People Chain.
-To interact with the _People_ chain, subxt library is used.
+Two ballot schemes are supported:
+- **Commit-reveal**: a Blake2b commitment is submitted while the poll is open, the vote and nonce are
+  revealed after it ends, then the poll is finalized.
+- **Encrypted ballots**: votes are TFHE-encrypted under the server's public key and summed
+  homomorphically; only the total is ever decrypted.
 
-This is a typical backend application that only communicates
-with the blockchain to verify user's personhood.
-Thus, in order to achieve data persistence with blockchain resilience,
-at least the data layer should be handled on chain.
+State lives in memory. Written in Rust with axum; the chain is read through
+[subxt](https://github.com/paritytech/subxt).
 
-## Left To Do
-- cleanup - retain only what's necessary,
-- code simplification.
+## How personhood is verified
 
-## Possible Evolutions of this project
-- public and private polls
-- decentralize it - put it on chain (execution, storage)
+A participant is identified by the hex of their Bandersnatch public key (`EncodedPublicKey`), the
+same key registered on the People chain. Every poll creation and vote carries that key, a plain
+signature over the request, and (for votes) a ring proof. The server checks them against the chain:
 
-## Features
+1. **Chain lookup** (`src/chain/people_multi.rs`, subxt `OnlineClient<PolkadotConfig>` with the
+   metadata-generated API in `src/chain/subxt_generated_people_apis.rs`):
+   - `People.Keys(key)` → the person's `PersonalId`
+   - `People.People(id).position` must be `Included { ring_index, .. }` (not onboarding or suspended)
+   - `People.Root(ring_index)` → the ring's `MembersCommitment`
+   A person is verified only if all three exist.
+2. **Signature**: `BandersnatchVrfVerifiable::verify_signature` over the canonical JSON message of
+   the request (poll data for creation; `{poll_id, vote_commitment, context}` for commits;
+   `{poll_id, encrypted_vote, context}` for encrypted ballots).
+3. **Ring proof** (votes only): the client opens the ring from `People.RingKeys(ring_index)` and
+   creates a proof with its secret over the poll's **context** (`Blake2b("PERSONS_POLL_{id}")`) and
+   the same message. The server validates it against the ring root from step 1
+   (`src/crypto/ring_proof.rs`). Validation yields the voter's **alias**, stable per (person,
+   context), so a second ballot from the same person on the same poll is rejected without the
+   server learning which ring member voted.
 
-### Voting Schemes
+Once verified, `src/services/` applies the voting rules and `src/storage/` keeps polls and votes.
 
-The platform supports two complementary voting schemes:
+## Run it
 
-#### 1. Commit-Reveal Voting
-- **Two-phase process**: Voters first commit to their vote (without revealing it), then reveal it in a second phase
-- **Privacy during voting**: Vote choices remain hidden during the commit phase
-- **Prevents vote manipulation**: Commitments are cryptographically binding using Blake2b hashes
-- **Endpoints**: `/polls/:poll_id/commit`, `/polls/:poll_id/reveal`, `/polls/:poll_id/finalize`
-
-#### 2. Homomorphic Encryption Voting
-- **End-to-end privacy**: Votes are encrypted and tallied without decryption
-- **Based on TFHE**: Uses fully homomorphic encryption for secure vote aggregation
-- **Validity proofs**: Bulletproofs ensure votes are valid (0 or 1) without revealing the choice
-- **Endpoints**: `/polls/:poll_id/cast-encrypted`, `/polls/:poll_id/homomorphic-tally`, `/encryption-key`
-
-### Personhood Verification
-
-All votes require proof of personhood verified through the People Chain:
-- **Ring proofs**: Zero-knowledge proofs of ring membership using Bandersnatch cryptography
-- **Anonymous voting**: Voter identity is verified without revealing who voted
-- **Sybil resistance**: Each person can vote only once per poll
-- **Ring context**: Each poll has a separate Bandersnatch Ring context (format: `PERSONS_POLL_{{poll_id}}`)
-
-## Quick Start
-
-### 1. Setup
 ```bash
-cp .env.example .env
-```
-
-### 2. Configure People Chain Connection
-Edit `.env` file and **ensure you specify the chain port**:
-```env
-PEOPLE_CHAIN_HOST=127.0.0.1
-PEOPLE_CHAIN_PORT=9944  
-PEOPLE_CHAIN_PROTOCOL=ws
-```
-
-### 3. Run the Server
-```bash
+cp .env.example .env     # set PEOPLE_CHAIN_PORT to your People chain's WebSocket port
 cargo run
 ```
 
-The server will start on `http://127.0.0.1:3000` by default and connect to the People Chain.
+The server connects to `PEOPLE_CHAIN_PROTOCOL://PEOPLE_CHAIN_HOST:PEOPLE_CHAIN_PORT` (retrying with
+backoff) and listens on `SERVER_HOST:SERVER_PORT`, `http://127.0.0.1:3000` by default. Check
+`GET /health`. Unit tests: `cargo test --lib -- --skip e2e`.
 
-## API Endpoints
+### API
 
-### Poll Management
-- `GET /health` - Health check endpoint
-- `GET /polls` - List all polls
-- `POST /polls` - Create a new poll
-- `GET /polls/:poll_id` - Get poll details
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | Liveness |
+| `GET` | `/polls` | List polls |
+| `POST` | `/polls` | Create a poll (signed `poll_data`) |
+| `GET` | `/polls/:poll_id` | Poll details |
+| `POST` | `/polls/:poll_id/commit` | Commit a vote (commitment, signature, ring proof) |
+| `POST` | `/polls/:poll_id/reveal` | Reveal a vote (type and nonce) after the poll ends |
+| `POST` | `/polls/:poll_id/finalize` | Count revealed votes and close the poll |
+| `GET` | `/polls/:poll_id/votes` | Yay/nay counts, `0/0` while the poll is open |
+| `GET` | `/encryption-key` | TFHE compact public key for encrypted ballots |
+| `POST` | `/polls/:poll_id/cast-encrypted` | Cast an encrypted ballot (ciphertext, signature, ring proof) |
+| `GET` | `/polls/:poll_id/encrypted-votes` | Stored encrypted ballots |
+| `GET` | `/polls/:poll_id/homomorphic-tally` | Decrypted total, `0/0` while the poll is open |
 
-### Commit-Reveal Voting
-- `POST /polls/:poll_id/commit` - Commit a vote (phase 1)
-- `POST /polls/:poll_id/reveal` - Reveal a committed vote (phase 2)
-- `POST /polls/:poll_id/finalize` - Finalize poll and tally votes
-- `GET /polls/:poll_id/votes` - Get all votes for a poll
+Errors come back as `{"error": "..."}` with 400, 401, 404 or 500.
 
-### Homomorphic Encryption Voting
-- `GET /encryption-key` - Get public encryption key
-- `POST /polls/:poll_id/cast-encrypted` - Cast an encrypted vote
-- `GET /polls/:poll_id/encrypted-votes` - Get all encrypted votes
-- `GET /polls/:poll_id/homomorphic-tally` - Get homomorphic tally results
+## Voting schemes
 
-## E2E Tests
+**Commit-reveal.** Commitment = `Blake2b512(vote_byte || nonce)[..32]`, hex-encoded. Reveal is
+accepted only after `ends_at`; it must open the stored commitment. Counts are hidden until the poll
+ends. Each poll has its own ring context, so aliases do not link votes across polls.
 
-This repository includes everything needed to run E2E tests.
+**Encrypted ballots.** The client fetches the server's `CompactPublicKey` (tfhe-rs shortint,
+`PARAM_MESSAGE_1_CARRY_7_COMPACT_PK_KS_PBS`), encrypts `1` (yay) or `0` (nay) and submits the hex of
+the bincode-serialized ciphertext. The server checks it is a well-formed ciphertext for its key,
+verifies the signature and ring proof, and stores it. The tally is a plain LWE sum, decrypted once;
+the 8-bit plaintext space keeps it exact up to 255 yay votes.
 
-### Quick Start (Automated)
+## Known limitations
 
-Run the complete E2E test suite with a single command:
+- The server holds the TFHE secret key. Encrypted ballots are protected in transit and at rest,
+  but a curious server could decrypt any single ballot.
+- Encrypted ballots are not proven to encrypt 0 or 1. Malformed ciphertexts are rejected, but a
+  malicious client with the public key can encrypt any value and skew the total. A sound fix needs
+  a zero-knowledge proof of plaintext range, which tfhe-rs 0.5 does not offer (newer tfhe-rs
+  ships `zk-pok`; that is a protocol change, not a patch).
+- Tally overflow above 255 yay votes; storage is in memory and lost on restart.
+
+## Possible evolutions
+
+- Public and private polls
+- Decentralize it: move execution and storage on chain
+
+## E2E tests
+
+The tests in `src/e2e/` run against a live People chain and a running server, producing real ring
+proofs from chain data. They are part of `cargo test`, so without a chain they fail; filter them
+out with `--skip e2e` or run them with the tooling under `devtools/`:
 
 ```bash
 ./devtools/scripts/run-e2e.sh
 ```
 
-This will automatically:
-1. Build the People Rococo runtime with test configuration
-2. Set up and start a local zombienet network
-3. Generate test users on the People chain
-4. Start the application server
-5. Run all E2E tests
-6. Clean up
+This builds a People Rococo runtime with `MaxRingSize=2` and `OnboardingQueuePageSize=2`, starts a
+zombienet network, registers test users, starts the server and runs `cargo test e2e`.
+Prerequisites and step-by-step usage are in `devtools/README.md`.
 
-### Prerequisites
+Useful variants:
 
-**Required Tools:**
-- [Rust toolchain](https://rustup.rs/)
-- [Zombienet CLI](https://github.com/paritytech/zombienet)
-- [subxt CLI](https://github.com/paritytech/subxt): `cargo install subxt-cli`
-
-**Required Binaries in PATH:**
-
-The following binaries must be accessible in your system PATH:
-- `polkadot`
-- `polkadot-parachain`
-- `polkadot-execute-worker`
-- `polkadot-prepare-worker`
-
-**Quick setup if you have binaries in a directory:**
 ```bash
-# Add to ~/.zshrc or ~/.bashrc
-export PATH="/path/to/your/binaries:$PATH"
-source ~/.zshrc
+./devtools/scripts/run-e2e.sh --skip-runtime-build                          # runtime already built
+./devtools/scripts/run-e2e.sh --skip-runtime-build --skip-network --skip-users  # network already up
+./devtools/scripts/run-e2e.sh --no-cleanup                                  # leave the network running
+RUST_LOG=debug cargo test e2e -- --nocapture                                # verbose test run
+cargo test test_recognized_users_poll_creation_and_voting -- --nocapture    # a single test
 ```
 
-See `devtools/zombienet/binaries/README.md` for detailed setup instructions.
-
-### Step-by-Step Manual Workflow
-
-If you prefer to run steps individually:
-
-#### 1. Build the Test Runtime
-```bash
-./devtools/scripts/build-runtime.sh
-```
-
-Builds People Rococo runtime with `MaxRingSize=2` and `OnboardingQueuePageSize=2`.
-
-#### 2. Start the Network
-```bash
-./devtools/scripts/setup-network.sh
-```
-
-Starts a local zombienet network with:
-- Rococo relay chain
-- People parachain (port 9910)
-
-#### 3. Generate Test Users
-```bash
-./devtools/scripts/generate-test-users.sh
-```
-
-Generates test users and registers them on the People chain. Output: `src/e2e/test_users.json`
-
-#### 4. Run Tests
-```bash
-cargo test e2e
-```
-
-### Advanced Options
-
-**Run tests with debug logging:**
-```bash
-RUST_LOG=debug cargo test e2e -- --nocapture
-```
-
-**Run specific tests:**
-```bash
-# Test poll creation and voting with identity proofs
-cargo test test_recognized_users_poll_creation_and_voting -- --nocapture
-
-# Test basic poll operations
-cargo test e2e::tests::test_basic_poll_creation_and_retrieval -- --nocapture
-
-# Test homomorphic encryption
-cargo test e2e::homomorphic_tests -- --nocapture
-```
-
-**Customize test user generation:**
-```bash
-./devtools/scripts/generate-test-users.sh --recognized 10 --onboarding 2
-```
-
-**Leave network running after tests:**
-```bash
-./devtools/scripts/run-e2e.sh --no-cleanup
-```
-
-**Run tests against existing network:**
-```bash
-./devtools/scripts/run-e2e.sh --skip-runtime-build --skip-network --skip-users
-```
-
-### Repository Structure
-
-```
-devtools/
-├── runtime/              # Test runtime artifacts
-├── zombienet/            # Network configuration and binaries
-│   ├── binaries/         # Node executables
-│   ├── small_network.toml
-│   └── *-chain-spec.json
-├── test-users-generator/ # Tool to generate test users
-└── scripts/              # Automation scripts
-    ├── build-runtime.sh
-    ├── setup-network.sh
-    ├── generate-test-users.sh
-    └── run-e2e.sh
-```
+The chain port is assigned by zombienet and written to `.env.e2e` by `setup-network.sh`; the
+server reads the same file when started by `run-e2e.sh`.

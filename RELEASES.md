@@ -1,5 +1,15 @@
 # Release History
 
+## v3.1.0
+
+### Description
+Cleanup and corrections of the homomorphic scheme:
+- `/encryption-key` serves a TFHE compact public key instead of the secret client key
+- tally no longer wraps modulo 4 (exact up to 255 yay votes); malformed ciphertexts rejected at cast
+- bulletproof "validity proof" and blake2 "pedersen commitment" removed as they proved nothing about
+  the ballot; `/cast-encrypted` no longer takes `validity_proof` or `vote_commitment` (breaking)
+- one chain lookup path, handlers folded into routes, dead code and unused dependencies removed
+
 ## v3.0.0
 
 ### Description
