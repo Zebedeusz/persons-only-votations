@@ -49,4 +49,9 @@ impl Poll {
             is_active: true,
         }
     }
+
+    /// Whether votes are still being accepted at `now`.
+    pub fn is_open(&self, now: i64) -> bool {
+        self.is_active && now <= self.ends_at
+    }
 }

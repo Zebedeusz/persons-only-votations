@@ -1,6 +1,6 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
-use crate::crypto::commitments::{hex_to_commitment, hex_to_nonce, verify_commitment};
-use crate::crypto::contexts::string_to_context;
+use crate::crypto::commitments::verify_commitment;
+use crate::crypto::hex_to_bytes32;
 use crate::crypto::homomorphic::{HomomorphicError, TfheVotingSystem};
 use crate::crypto::ring_proof::{RingProofError, validate_ring_proof};
 use crate::storage::models::poll::Poll;
@@ -8,9 +8,9 @@ use crate::storage::models::vote::{
     CastEncryptedVoteRequest, CastVoteResponse, CommitVoteRequest, EncryptedVote,
     RevealVoteRequest, Vote, VotePhase, VoteType,
 };
-use crate::storage::repositories::poll_repository::Repository;
+use crate::storage::repositories::poll_repository::{PollRepository, PollRepositoryError};
 use crate::storage::repositories::vote_repository::{VoteRepository, VoteRepositoryError};
-use crate::utils::{TimeError, get_current_timestamp};
+use crate::utils::get_current_timestamp;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -39,28 +39,46 @@ pub enum VoteServiceError {
     #[error("Vote repository error: {0}")]
     VoteRepositoryError(#[from] VoteRepositoryError),
     #[error("Poll repository error: {0}")]
-    PollRepositoryError(#[from] crate::storage::repositories::poll_repository::PollRepositoryError),
+    PollRepositoryError(#[from] PollRepositoryError),
     #[error("Ring proof error: {0}")]
     RingProofError(#[from] RingProofError),
     #[error("Homomorphic encryption error: {0}")]
     HomomorphicError(#[from] HomomorphicError),
-    #[error("Time error: {0}")]
-    TimeError(#[from] TimeError),
 }
 
 pub type Result<T> = std::result::Result<T, VoteServiceError>;
 
+/// Message a voter signs when committing a vote; also the ring-proof message.
+pub fn commit_message(poll_id: u32, vote_commitment: &str, poll_context: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "poll_id": poll_id,
+        "vote_commitment": vote_commitment,
+        "context": poll_context
+    }))
+    .expect("JSON value always serializes")
+}
+
+/// Message a voter signs when casting an encrypted ballot; also the ring-proof message.
+pub fn encrypted_vote_message(poll_id: u32, encrypted_vote: &str, poll_context: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "poll_id": poll_id,
+        "encrypted_vote": encrypted_vote,
+        "context": poll_context
+    }))
+    .expect("JSON value always serializes")
+}
+
 pub struct VoteService {
-    vote_repository: Arc<dyn VoteRepository>,
-    poll_repository: Arc<dyn Repository>,
+    vote_repository: Arc<VoteRepository>,
+    poll_repository: Arc<PollRepository>,
     chain_client: Arc<dyn ChainClient>,
     tfhe: TfheVotingSystem,
 }
 
 impl VoteService {
     pub fn new(
-        vote_repository: Arc<dyn VoteRepository>,
-        poll_repository: Arc<dyn Repository>,
+        vote_repository: Arc<VoteRepository>,
+        poll_repository: Arc<PollRepository>,
         chain_client: Arc<dyn ChainClient>,
     ) -> Self {
         Self {
@@ -71,22 +89,62 @@ impl VoteService {
         }
     }
 
-    fn validate_poll_active(poll: &Poll, current_time: i64) -> Result<()> {
-        if !poll.is_active || current_time > poll.ends_at {
-            return Err(VoteServiceError::PollNotActive);
+    fn load_poll(&self, poll_id: u32) -> Result<Poll> {
+        self.poll_repository
+            .get_poll_by_id(poll_id)?
+            .ok_or(VoteServiceError::PollNotFound(poll_id))
+    }
+
+    /// Verifies personhood, the plain signature and the ring proof over `message`;
+    /// returns the voter's ring alias used for one-vote-per-person.
+    async fn authorize_voter(
+        &self,
+        poll: &Poll,
+        member_hex: &str,
+        signature: &str,
+        ring_proof: &str,
+        message: &[u8],
+    ) -> Result<String> {
+        let ring_index = self
+            .chain_client
+            .ring_index(member_hex)
+            .await?
+            .ok_or_else(|| {
+                VoteServiceError::AuthorizationFailed(
+                    "Voter is not included in any ring (may be onboarding)".to_string(),
+                )
+            })?;
+        let ring_root = self
+            .chain_client
+            .ring_root(ring_index)
+            .await?
+            .ok_or_else(|| {
+                VoteServiceError::AuthorizationFailed(format!(
+                    "Ring root not found for ring index {ring_index}"
+                ))
+            })?;
+        if !self
+            .chain_client
+            .validate_signature(member_hex, signature, message)
+            .await?
+        {
+            return Err(VoteServiceError::AuthorizationFailed(
+                "Invalid signature".to_string(),
+            ));
         }
-        Ok(())
+        let context = hex_to_bytes32(&poll.context)
+            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid poll context: {e}")))?;
+        Ok(validate_ring_proof(
+            ring_proof, &ring_root, &context, message,
+        )?)
     }
 
     pub async fn commit_vote(&self, request: CommitVoteRequest) -> Result<CastVoteResponse> {
-        let poll = self
-            .poll_repository
-            .get_poll_by_id(request.poll_id)?
-            .ok_or(VoteServiceError::PollNotFound(request.poll_id))?;
-
-        let current_time = get_current_timestamp()?;
-        Self::validate_poll_active(&poll, current_time)?;
-
+        let poll = self.load_poll(request.poll_id)?;
+        let now = get_current_timestamp();
+        if !poll.is_open(now) {
+            return Err(VoteServiceError::PollNotActive);
+        }
         if self
             .vote_repository
             .get_vote_by_poll_and_voter(request.poll_id, &request.voter_member_hex)?
@@ -95,67 +153,26 @@ impl VoteService {
             return Err(VoteServiceError::DuplicateVote);
         }
 
-        let person_verified = self
-            .chain_client
-            .verify_personhood(&request.voter_member_hex, &request.voter_signature)
-            .await?;
-
-        if !person_verified {
-            return Err(VoteServiceError::AuthorizationFailed(
-                "Voter personhood not verified".to_string(),
-            ));
-        }
-
-        let commit_message = self.create_commit_message(&request, &poll.context)?;
-        let signature_valid = self
-            .chain_client
-            .validate_signature(
+        let message = commit_message(request.poll_id, &request.vote_commitment, &poll.context);
+        let voter_alias = self
+            .authorize_voter(
+                &poll,
                 &request.voter_member_hex,
                 &request.voter_signature,
-                &commit_message,
+                &request.ring_proof,
+                &message,
             )
             .await?;
 
-        if !signature_valid {
-            return Err(VoteServiceError::AuthorizationFailed(
-                "Invalid commit signature".to_string(),
-            ));
-        }
-
-        let context_bytes = string_to_context(&poll.context)
-            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid poll context: {e}")))?;
-
-        let voter_ring_index = self.get_voter_ring_index(&request.voter_member_hex).await?;
-
-        let ring_root = self
-            .chain_client
-            .get_ring_root(voter_ring_index)
-            .await
-            .map_err(VoteServiceError::ChainError)?
-            .ok_or_else(|| {
-                VoteServiceError::AuthorizationFailed(format!(
-                    "Ring root not found for ring index {voter_ring_index}"
-                ))
-            })?;
-
-        let voter_alias = validate_ring_proof(
-            &request.ring_proof,
-            &ring_root,
-            &context_bytes,
-            &commit_message,
-        )?;
-
-        let vote = Vote::new_commit(
+        self.vote_repository.create_vote(Vote::new_commit(
             request.poll_id,
             request.voter_member_hex,
             voter_alias,
             request.vote_commitment,
             request.voter_signature,
             request.ring_proof,
-            current_time,
-        );
-
-        self.vote_repository.create_vote(vote)?;
+            now,
+        ))?;
 
         Ok(CastVoteResponse {
             poll_id: request.poll_id,
@@ -164,14 +181,9 @@ impl VoteService {
     }
 
     pub async fn reveal_vote(&self, request: RevealVoteRequest) -> Result<CastVoteResponse> {
-        let poll = self
-            .poll_repository
-            .get_poll_by_id(request.poll_id)?
-            .ok_or(VoteServiceError::PollNotFound(request.poll_id))?;
-
-        let current_time = get_current_timestamp()?;
-
-        if poll.is_active && current_time <= poll.ends_at {
+        let mut poll = self.load_poll(request.poll_id)?;
+        let now = get_current_timestamp();
+        if poll.is_open(now) {
             return Err(VoteServiceError::PollNotInRevealPhase);
         }
 
@@ -179,161 +191,75 @@ impl VoteService {
             .vote_repository
             .get_vote_by_poll_and_voter(request.poll_id, &request.voter_member_hex)?
             .ok_or(VoteServiceError::VoteNotFound)?;
-
         if vote.phase == VotePhase::Revealed {
             return Err(VoteServiceError::VoteAlreadyRevealed);
         }
 
-        let commitment = hex_to_commitment(&vote.vote_commitment)
+        let commitment = hex_to_bytes32(&vote.vote_commitment)
             .map_err(|e| VoteServiceError::InvalidData(format!("Invalid commitment hex: {e}")))?;
-        let nonce = hex_to_nonce(&request.vote_nonce)
+        let nonce = hex_to_bytes32(&request.vote_nonce)
             .map_err(|e| VoteServiceError::InvalidData(format!("Invalid nonce hex: {e}")))?;
-
         if !verify_commitment(&commitment, &request.vote_type, &nonce) {
             return Err(VoteServiceError::InvalidCommitment);
         }
 
-        vote.reveal(request.vote_type.clone(), request.vote_nonce, current_time);
+        vote.reveal(request.vote_type.clone(), request.vote_nonce, now);
         self.vote_repository.update_vote(vote)?;
 
-        let (yay_count, nay_count) = self.count_revealed_votes(request.poll_id)?;
-        let mut updated_poll = poll;
-        updated_poll.yay_votes = yay_count;
-        updated_poll.nay_votes = nay_count;
-        self.poll_repository.update_poll(updated_poll)?;
+        (poll.yay_votes, poll.nay_votes) = self.count_revealed_votes(request.poll_id)?;
+        self.poll_repository.update_poll(poll)?;
 
-        let vote_type_message = match request.vote_type {
+        let message = match request.vote_type {
             VoteType::Yay => "Yay vote revealed successfully",
             VoteType::Nay => "Nay vote revealed successfully",
         };
-
         Ok(CastVoteResponse {
             poll_id: request.poll_id,
-            message: vote_type_message.to_string(),
+            message: message.to_string(),
         })
     }
 
-    pub async fn get_poll_votes(&self, poll_id: u32) -> Result<Vec<Vote>> {
-        self.poll_repository
-            .get_poll_by_id(poll_id)?
-            .ok_or(VoteServiceError::PollNotFound(poll_id))?;
-
-        Ok(self.vote_repository.get_votes_by_poll(poll_id)?)
-    }
-
+    /// Revealed (yay, nay) counts; hidden as (0, 0) while the poll is open.
     pub async fn get_vote_counts(&self, poll_id: u32) -> Result<(u32, u32)> {
-        let poll = self
-            .poll_repository
-            .get_poll_by_id(poll_id)?
-            .ok_or(VoteServiceError::PollNotFound(poll_id))?;
-
-        let current_time = get_current_timestamp()?;
-
-        if poll.is_active && current_time <= poll.ends_at {
+        let poll = self.load_poll(poll_id)?;
+        if poll.is_open(get_current_timestamp()) {
             return Ok((0, 0));
         }
-
         self.count_revealed_votes(poll_id)
     }
 
     pub async fn finalize_poll_results(&self, poll_id: u32) -> Result<(u32, u32)> {
-        let mut poll = self
-            .poll_repository
-            .get_poll_by_id(poll_id)?
-            .ok_or(VoteServiceError::PollNotFound(poll_id))?;
-
-        let current_time = get_current_timestamp()?;
-        if poll.is_active && current_time <= poll.ends_at {
+        let mut poll = self.load_poll(poll_id)?;
+        if poll.is_open(get_current_timestamp()) {
             return Err(VoteServiceError::PollNotActive);
         }
-
-        let (yay_count, nay_count) = self.count_revealed_votes(poll_id)?;
-
-        poll.yay_votes = yay_count;
-        poll.nay_votes = nay_count;
+        let counts = self.count_revealed_votes(poll_id)?;
+        (poll.yay_votes, poll.nay_votes) = counts;
         poll.is_active = false;
-
         self.poll_repository.update_poll(poll)?;
-
-        Ok((yay_count, nay_count))
-    }
-
-    async fn get_voter_ring_index(&self, member_hex: &str) -> Result<u16> {
-        let is_verified = self
-            .chain_client
-            .verify_personhood(member_hex, "")
-            .await
-            .map_err(VoteServiceError::ChainError)?;
-
-        if !is_verified {
-            return Err(VoteServiceError::AuthorizationFailed(
-                "Voter not verified for ring membership".to_string(),
-            ));
-        }
-
-        let ring_index = self
-            .chain_client
-            .get_person_ring_index(member_hex)
-            .await
-            .map_err(VoteServiceError::ChainError)?
-            .ok_or_else(|| {
-                VoteServiceError::AuthorizationFailed(
-                    "Voter is not included in any ring (may be onboarding)".to_string(),
-                )
-            })?;
-
-        Ok(ring_index)
-    }
-
-    fn create_commit_message(
-        &self,
-        request: &CommitVoteRequest,
-        poll_context: &str,
-    ) -> Result<Vec<u8>> {
-        let commit_data = serde_json::json!({
-            "poll_id": request.poll_id,
-            "vote_commitment": request.vote_commitment,
-            "context": poll_context
-        });
-
-        let message = serde_json::to_string(&commit_data).map_err(|e| {
-            VoteServiceError::InvalidData(format!("JSON serialization failed: {e}"))
-        })?;
-
-        Ok(message.as_bytes().to_vec())
+        Ok(counts)
     }
 
     fn count_revealed_votes(&self, poll_id: u32) -> Result<(u32, u32)> {
         let votes = self.vote_repository.get_votes_by_poll(poll_id)?;
-        let mut yay_count = 0;
-        let mut nay_count = 0;
-
-        for vote in votes {
-            if vote.phase == VotePhase::Revealed {
-                if let Some(vote_type) = vote.vote_type {
-                    match vote_type {
-                        VoteType::Yay => yay_count += 1,
-                        VoteType::Nay => nay_count += 1,
-                    }
-                }
-            }
-        }
-
-        Ok((yay_count, nay_count))
+        let count = |wanted: VoteType| {
+            votes
+                .iter()
+                .filter(|v| v.vote_type == Some(wanted.clone()))
+                .count() as u32
+        };
+        Ok((count(VoteType::Yay), count(VoteType::Nay)))
     }
 
     pub async fn cast_encrypted_vote(
         &self,
         request: CastEncryptedVoteRequest,
     ) -> Result<CastVoteResponse> {
-        let poll = self
-            .poll_repository
-            .get_poll_by_id(request.poll_id)?
-            .ok_or(VoteServiceError::PollNotFound(request.poll_id))?;
-
-        let current_time = get_current_timestamp()?;
-        Self::validate_poll_active(&poll, current_time)?;
-
+        let poll = self.load_poll(request.poll_id)?;
+        let now = get_current_timestamp();
+        if !poll.is_open(now) {
+            return Err(VoteServiceError::PollNotActive);
+        }
         if self
             .vote_repository
             .get_encrypted_vote_by_poll_and_voter(request.poll_id, &request.voter_member_hex)?
@@ -341,74 +267,33 @@ impl VoteService {
         {
             return Err(VoteServiceError::DuplicateVote);
         }
-
-        let person_verified = self
-            .chain_client
-            .verify_personhood(&request.voter_member_hex, &request.voter_signature)
-            .await?;
-
-        if !person_verified {
-            return Err(VoteServiceError::AuthorizationFailed(
-                "Voter personhood not verified".to_string(),
-            ));
-        }
-
         // Rejecting ballots that are not ciphertexts under the server key before any chain work
         let _ = self
             .tfhe
             .decode_ciphertext(&request.encrypted_vote)
             .map_err(|e| VoteServiceError::InvalidData(format!("Invalid encrypted vote: {e}")))?;
 
-        let encrypted_vote_message = self.create_encrypted_vote_message(&request, &poll.context)?;
-        let signature_valid = self
-            .chain_client
-            .validate_signature(
+        let message =
+            encrypted_vote_message(request.poll_id, &request.encrypted_vote, &poll.context);
+        let voter_alias = self
+            .authorize_voter(
+                &poll,
                 &request.voter_member_hex,
                 &request.voter_signature,
-                &encrypted_vote_message,
+                &request.ring_proof,
+                &message,
             )
             .await?;
 
-        if !signature_valid {
-            return Err(VoteServiceError::AuthorizationFailed(
-                "Invalid encrypted vote signature".to_string(),
-            ));
-        }
-
-        let context_bytes = string_to_context(&poll.context)
-            .map_err(|e| VoteServiceError::InvalidData(format!("Invalid poll context: {e}")))?;
-
-        let voter_ring_index = self.get_voter_ring_index(&request.voter_member_hex).await?;
-
-        let ring_root = self
-            .chain_client
-            .get_ring_root(voter_ring_index)
-            .await
-            .map_err(VoteServiceError::ChainError)?
-            .ok_or_else(|| {
-                VoteServiceError::AuthorizationFailed(format!(
-                    "Ring root not found for ring index {voter_ring_index}"
-                ))
-            })?;
-
-        let voter_alias = validate_ring_proof(
-            &request.ring_proof,
-            &ring_root,
-            &context_bytes,
-            &encrypted_vote_message,
-        )?;
-
-        let encrypted_vote = EncryptedVote {
+        self.vote_repository.create_encrypted_vote(EncryptedVote {
             poll_id: request.poll_id,
             voter_member_hex: request.voter_member_hex,
             voter_alias,
             encrypted_vote: request.encrypted_vote,
             ring_proof: request.ring_proof,
             voter_signature: request.voter_signature,
-            created_at: current_time,
-        };
-
-        self.vote_repository.create_encrypted_vote(encrypted_vote)?;
+            created_at: now,
+        })?;
 
         Ok(CastVoteResponse {
             poll_id: request.poll_id,
@@ -417,58 +302,24 @@ impl VoteService {
     }
 
     pub async fn get_poll_encrypted_votes(&self, poll_id: u32) -> Result<Vec<EncryptedVote>> {
-        self.poll_repository
-            .get_poll_by_id(poll_id)?
-            .ok_or(VoteServiceError::PollNotFound(poll_id))?;
-
+        self.load_poll(poll_id)?;
         Ok(self.vote_repository.get_encrypted_votes_by_poll(poll_id)?)
     }
 
+    /// Homomorphic (yay, nay) tally; hidden as (0, 0) while the poll is open.
     pub async fn compute_homomorphic_tally(&self, poll_id: u32) -> Result<(u64, u64)> {
-        let poll = self
-            .poll_repository
-            .get_poll_by_id(poll_id)?
-            .ok_or(VoteServiceError::PollNotFound(poll_id))?;
-
-        let current_time = get_current_timestamp()?;
-
-        if poll.is_active && current_time <= poll.ends_at {
+        let poll = self.load_poll(poll_id)?;
+        if poll.is_open(get_current_timestamp()) {
             return Ok((0, 0));
         }
-
         let encrypted_votes = self.vote_repository.get_encrypted_votes_by_poll(poll_id)?;
-
-        if encrypted_votes.is_empty() {
-            return Ok((0, 0));
-        }
-
         let ciphertexts = encrypted_votes
             .iter()
             .map(|vote| self.tfhe.decode_ciphertext(&vote.encrypted_vote))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-
         let yay_count = self.tfhe.tally(&ciphertexts);
         let nay_count = (encrypted_votes.len() as u64).saturating_sub(yay_count);
-
         Ok((yay_count, nay_count))
-    }
-
-    fn create_encrypted_vote_message(
-        &self,
-        request: &CastEncryptedVoteRequest,
-        poll_context: &str,
-    ) -> Result<Vec<u8>> {
-        let vote_data = serde_json::json!({
-            "poll_id": request.poll_id,
-            "encrypted_vote": request.encrypted_vote,
-            "context": poll_context
-        });
-
-        let message = serde_json::to_string(&vote_data).map_err(|e| {
-            VoteServiceError::InvalidData(format!("JSON serialization failed: {e}"))
-        })?;
-
-        Ok(message.as_bytes().to_vec())
     }
 
     pub fn get_public_encryption_key(&self) -> Result<String> {

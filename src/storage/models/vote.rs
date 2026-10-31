@@ -62,6 +62,7 @@ impl Vote {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitVoteRequest {
+    #[serde(default)] // Taken from the URL path
     pub poll_id: u32,
     pub voter_member_hex: String, // Hex-encoded EncodedPublicKey
     pub vote_commitment: String,  // Hex-encoded commitment
@@ -71,6 +72,7 @@ pub struct CommitVoteRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RevealVoteRequest {
+    #[serde(default)] // Taken from the URL path
     pub poll_id: u32,
     pub voter_member_hex: String, // Hex-encoded EncodedPublicKey
     pub vote_type: VoteType,
@@ -89,14 +91,15 @@ pub struct EncryptedVote {
     pub poll_id: u32,
     pub voter_member_hex: String,
     pub voter_alias: String,
-    pub encrypted_vote: String,  // Hex-encoded TFHE ciphertext of 0 (nay) or 1 (yay)
-    pub ring_proof: String,      // Existing anonymity proof
+    pub encrypted_vote: String, // Hex-encoded TFHE ciphertext of 0 (nay) or 1 (yay)
+    pub ring_proof: String,     // Existing anonymity proof
     pub voter_signature: String, // Hex-encoded verifiable crypto signature
     pub created_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CastEncryptedVoteRequest {
+    #[serde(default)] // Taken from the URL path
     pub poll_id: u32,
     pub voter_member_hex: String,
     pub encrypted_vote: String,

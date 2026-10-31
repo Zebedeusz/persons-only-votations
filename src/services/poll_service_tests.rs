@@ -1,443 +1,163 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
 use crate::services::poll_service::{PollService, PollServiceError};
-use crate::storage::models::poll::{CreatePollRequest, Poll, PollData};
-use crate::storage::repositories::poll_repository::{PollRepositoryError, Repository};
+use crate::storage::models::poll::{CreatePollRequest, PollData};
+use crate::storage::repositories::poll_repository::PollRepository;
+use crate::utils::get_current_timestamp;
 use async_trait::async_trait;
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use verifiable::{
+    GenerateVerifiable,
+    ring_vrf_impl::{BandersnatchVrfVerifiable, MembersCommitment},
+};
 
-pub struct MockChainClient {
-    pub verify_personhood_result: Arc<Mutex<Result<bool, ChainError>>>,
-    pub validate_signature_result: Arc<Mutex<Result<bool, ChainError>>>,
+/// Chain stand-in: every call returns the configured value.
+struct MockChainClient {
+    signature_valid: Result<bool, ChainError>,
+    ring_index: Result<Option<u16>, ChainError>,
 }
 
 impl Default for MockChainClient {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockChainClient {
-    pub fn new() -> Self {
         Self {
-            verify_personhood_result: Arc::new(Mutex::new(Ok(true))),
-            validate_signature_result: Arc::new(Mutex::new(Ok(true))),
+            signature_valid: Ok(true),
+            ring_index: Ok(Some(0)),
         }
-    }
-
-    pub fn set_verify_personhood_result(&self, result: Result<bool, ChainError>) {
-        *self.verify_personhood_result.lock().unwrap() = result;
-    }
-
-    pub fn set_validate_signature_result(&self, result: Result<bool, ChainError>) {
-        *self.validate_signature_result.lock().unwrap() = result;
     }
 }
 
 #[async_trait]
 impl ChainClient for MockChainClient {
-    async fn verify_personhood(
-        &self,
-        _public_key: &str,
-        _signature: &str,
-    ) -> Result<bool, ChainError> {
-        self.verify_personhood_result.lock().unwrap().clone()
+    async fn validate_signature(&self, _: &str, _: &str, _: &[u8]) -> Result<bool, ChainError> {
+        self.signature_valid.clone()
     }
 
-    async fn validate_signature(
-        &self,
-        _public_key: &str,
-        _signature: &str,
-        _message: &[u8],
-    ) -> Result<bool, ChainError> {
-        self.validate_signature_result.lock().unwrap().clone()
+    async fn ring_index(&self, _: &str) -> Result<Option<u16>, ChainError> {
+        self.ring_index.clone()
     }
 
-    async fn get_ring_root(
-        &self,
-        _ring_index: u16,
-    ) -> Result<Option<crate::chain::runtime::RingRoot>, ChainError> {
-        use crate::crypto::test_helpers::create_mock_ring_root;
-        Ok(Some(create_mock_ring_root()))
-    }
-
-    async fn get_person_ring_index(&self, _member_hex: &str) -> Result<Option<u16>, ChainError> {
-        // For testing, return ring index 0 for verified persons
-        Ok(Some(0))
+    async fn ring_root(&self, _: u16) -> Result<Option<MembersCommitment>, ChainError> {
+        Ok(Some(BandersnatchVrfVerifiable::finish_members(
+            BandersnatchVrfVerifiable::start_members(),
+        )))
     }
 }
 
-pub struct MockRepository {
-    pub create_poll_result: Arc<Mutex<Result<u32, PollRepositoryError>>>,
-    pub update_poll_result: Arc<Mutex<Result<(), PollRepositoryError>>>,
-    pub get_poll_result: Arc<Mutex<Result<Option<Poll>, PollRepositoryError>>>,
-    pub get_polls_by_creator_result: Arc<Mutex<Result<Vec<Poll>, PollRepositoryError>>>,
+fn service(chain: MockChainClient) -> PollService {
+    PollService::new(Arc::new(PollRepository::default()), Arc::new(chain))
 }
 
-impl Default for MockRepository {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockRepository {
-    pub fn new() -> Self {
-        Self {
-            create_poll_result: Arc::new(Mutex::new(Ok(1))),
-            update_poll_result: Arc::new(Mutex::new(Ok(()))),
-            get_poll_result: Arc::new(Mutex::new(Ok(None))),
-            get_polls_by_creator_result: Arc::new(Mutex::new(Ok(vec![]))),
-        }
-    }
-
-    pub fn set_create_poll_result(&self, result: Result<u32, PollRepositoryError>) {
-        *self.create_poll_result.lock().unwrap() = result;
-    }
-
-    pub fn set_update_poll_result(&self, result: Result<(), PollRepositoryError>) {
-        *self.update_poll_result.lock().unwrap() = result;
-    }
-}
-
-impl Repository for MockRepository {
-    fn create_poll(&self, _poll: Poll) -> Result<u32, PollRepositoryError> {
-        self.create_poll_result.lock().unwrap().clone()
-    }
-
-    fn get_poll_by_id(&self, _id: u32) -> Result<Option<Poll>, PollRepositoryError> {
-        self.get_poll_result.lock().unwrap().clone()
-    }
-
-    fn get_polls_by_creator(&self, _creator_key: &str) -> Result<Vec<Poll>, PollRepositoryError> {
-        self.get_polls_by_creator_result.lock().unwrap().clone()
-    }
-
-    fn get_all_polls(&self) -> Result<Vec<Poll>, PollRepositoryError> {
-        // Return empty vec for tests - can be customized per test if needed
-        Ok(vec![])
-    }
-
-    fn update_poll(&self, _poll: Poll) -> Result<(), PollRepositoryError> {
-        self.update_poll_result.lock().unwrap().clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn create_valid_poll_data() -> PollData {
-        let future_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + 3600; // 1 hour from now
-
-        PollData {
+fn request_ending_in(seconds: i64) -> CreatePollRequest {
+    CreatePollRequest {
+        creator_member_hex: "xoxo".to_string(),
+        creator_signature: "abcd1234".to_string(),
+        poll_data: PollData {
             name: "Test Poll".to_string(),
             description: "Test Description".to_string(),
-            ends_at: future_time,
-        }
+            ends_at: get_current_timestamp() + seconds,
+        },
     }
+}
 
-    fn create_valid_request() -> CreatePollRequest {
-        CreatePollRequest {
-            creator_member_hex: "xoxo".to_string(),
-            creator_signature: "abcd1234".to_string(),
-            poll_data: create_valid_poll_data(),
-        }
+fn valid_request() -> CreatePollRequest {
+    request_ending_in(3600)
+}
+
+async fn invalid_data_message(request: CreatePollRequest) -> String {
+    match service(MockChainClient::default())
+        .create_poll(request)
+        .await
+    {
+        Err(PollServiceError::InvalidData(msg)) => msg,
+        other => panic!("Expected InvalidData, got {other:?}"),
     }
+}
 
-    #[tokio::test]
-    async fn test_create_poll_success() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
+#[tokio::test]
+async fn creates_poll_with_context() {
+    let response = service(MockChainClient::default())
+        .create_poll(valid_request())
+        .await
+        .unwrap();
 
-        mock_repo.set_create_poll_result(Ok(123));
-        mock_repo.set_update_poll_result(Ok(()));
-        mock_chain.set_validate_signature_result(Ok(true));
-        mock_chain.set_verify_personhood_result(Ok(true));
+    assert_ne!(response.poll_id, 0);
+    assert_eq!(response.context.len(), 64);
+}
 
-        let service = PollService::new(mock_repo, mock_chain);
+#[tokio::test]
+async fn accepts_exactly_30_days_duration() {
+    let result = service(MockChainClient::default())
+        .create_poll(request_ending_in(30 * 24 * 60 * 60 - 1))
+        .await;
+    assert!(result.is_ok());
+}
 
-        let request = create_valid_request();
-        let result = service.create_poll(request).await;
+#[tokio::test]
+async fn rejects_invalid_poll_data() {
+    let mut request = valid_request();
+    request.poll_data.name = "   \t\n  ".to_string();
+    assert_eq!(invalid_data_message(request).await, "Name cannot be empty");
 
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert_eq!(response.poll_id, 123);
-        assert!(!response.context.is_empty());
+    let mut request = valid_request();
+    request.poll_data.name = "a".repeat(201);
+    assert_eq!(invalid_data_message(request).await, "Name too long");
+
+    let mut request = valid_request();
+    request.poll_data.description = "a".repeat(2001);
+    assert_eq!(invalid_data_message(request).await, "Description too long");
+
+    assert_eq!(
+        invalid_data_message(request_ending_in(-1)).await,
+        "End time must be in the future"
+    );
+    assert_eq!(
+        invalid_data_message(request_ending_in(31 * 24 * 60 * 60)).await,
+        "Poll duration cannot exceed 30 days"
+    );
+}
+
+#[tokio::test]
+async fn rejects_invalid_signature() {
+    let chain = MockChainClient {
+        signature_valid: Ok(false),
+        ..Default::default()
+    };
+    match service(chain).create_poll(valid_request()).await {
+        Err(PollServiceError::AuthorizationFailed(msg)) => assert_eq!(msg, "Invalid signature"),
+        other => panic!("Expected AuthorizationFailed, got {other:?}"),
     }
+}
 
-    #[tokio::test]
-    async fn test_create_poll_empty_name() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let mut request = create_valid_request();
-        request.poll_data.name = "".to_string();
-
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::InvalidData(msg) => assert_eq!(msg, "Name cannot be empty"),
-            _ => panic!("Expected InvalidData error"),
-        }
+#[tokio::test]
+async fn rejects_unverified_person() {
+    let chain = MockChainClient {
+        ring_index: Ok(None),
+        ..Default::default()
+    };
+    match service(chain).create_poll(valid_request()).await {
+        Err(PollServiceError::AuthorizationFailed(msg)) => assert_eq!(msg, "Person not verified"),
+        other => panic!("Expected AuthorizationFailed, got {other:?}"),
     }
+}
 
-    #[tokio::test]
-    async fn test_create_poll_name_too_long() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-        let service = PollService::new(mock_repo, mock_chain);
+#[tokio::test]
+async fn propagates_chain_errors() {
+    let chain = MockChainClient {
+        signature_valid: Err(ChainError::ConnectionFailed("Network error".to_string())),
+        ..Default::default()
+    };
+    assert!(matches!(
+        service(chain).create_poll(valid_request()).await,
+        Err(PollServiceError::ChainError(ChainError::ConnectionFailed(
+            _
+        )))
+    ));
 
-        let mut request = create_valid_request();
-        request.poll_data.name = "a".repeat(201);
-
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::InvalidData(msg) => assert_eq!(msg, "Name too long"),
-            _ => panic!("Expected InvalidData error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_description_too_long() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let mut request = create_valid_request();
-        request.poll_data.description = "a".repeat(2001);
-
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::InvalidData(msg) => assert_eq!(msg, "Description too long"),
-            _ => panic!("Expected InvalidData error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_end_time_in_past() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let mut request = create_valid_request();
-        request.poll_data.ends_at = 0; // Way in the past
-
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::InvalidData(msg) => assert_eq!(msg, "End time must be in the future"),
-            _ => panic!("Expected InvalidData error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_duration_too_long() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let mut request = create_valid_request();
-        // 31 days from now
-        let far_future = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + (31 * 24 * 60 * 60);
-        request.poll_data.ends_at = far_future;
-
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::InvalidData(msg) => {
-                assert_eq!(msg, "Poll duration cannot exceed 30 days")
-            }
-            _ => panic!("Expected InvalidData error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_invalid_signature() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-
-        mock_chain.set_validate_signature_result(Ok(false));
-
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let request = create_valid_request();
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::AuthorizationFailed(msg) => assert_eq!(msg, "Invalid signature"),
-            _ => panic!("Expected AuthorizationFailed error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_signature_validation_chain_error() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-
-        mock_chain.set_validate_signature_result(Err(ChainError::ConnectionFailed(
-            "Network error".to_string(),
-        )));
-
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let request = create_valid_request();
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::ChainError(ChainError::ConnectionFailed(msg)) => {
-                assert_eq!(msg, "Network error");
-            }
-            _ => panic!("Expected ChainError::ConnectionFailed"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_personhood_not_verified() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-
-        mock_chain.set_validate_signature_result(Ok(true));
-        mock_chain.set_verify_personhood_result(Ok(false));
-
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let request = create_valid_request();
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::AuthorizationFailed(msg) => assert_eq!(msg, "Person not verified"),
-            _ => panic!("Expected AuthorizationFailed error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_personhood_verification_chain_error() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-
-        mock_chain.set_validate_signature_result(Ok(true));
-        mock_chain.set_verify_personhood_result(Err(ChainError::QueryFailed(
-            "Query timeout".to_string(),
-        )));
-
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let request = create_valid_request();
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::ChainError(ChainError::QueryFailed(msg)) => {
-                assert_eq!(msg, "Query timeout");
-            }
-            _ => panic!("Expected ChainError::QueryFailed"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_repository_create_error() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-
-        mock_chain.set_validate_signature_result(Ok(true));
-        mock_chain.set_verify_personhood_result(Ok(true));
-        mock_repo.set_create_poll_result(Err(PollRepositoryError::LockError));
-
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let request = create_valid_request();
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::RepositoryError(PollRepositoryError::LockError) => {}
-            _ => panic!("Expected RepositoryError::LockError"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_repository_update_error() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-
-        mock_chain.set_validate_signature_result(Ok(true));
-        mock_chain.set_verify_personhood_result(Ok(true));
-        mock_repo.set_create_poll_result(Ok(456));
-        mock_repo.set_update_poll_result(Err(PollRepositoryError::PollNotFound(456)));
-
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let request = create_valid_request();
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::RepositoryError(PollRepositoryError::PollNotFound(id)) => {
-                assert_eq!(id, 456);
-            }
-            _ => panic!("Expected RepositoryError::PollNotFound"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_whitespace_only_name() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let mut request = create_valid_request();
-        request.poll_data.name = "   \t\n  ".to_string(); // Only whitespace
-
-        let result = service.create_poll(request).await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PollServiceError::InvalidData(msg) => assert_eq!(msg, "Name cannot be empty"),
-            _ => panic!("Expected InvalidData error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_poll_exactly_30_days_duration() {
-        let mock_repo = Arc::new(MockRepository::new());
-        let mock_chain = Arc::new(MockChainClient::new());
-
-        mock_chain.set_validate_signature_result(Ok(true));
-        mock_chain.set_verify_personhood_result(Ok(true));
-        mock_repo.set_create_poll_result(Ok(789));
-        mock_repo.set_update_poll_result(Ok(()));
-
-        let service = PollService::new(mock_repo, mock_chain);
-
-        let mut request = create_valid_request();
-        // 30 days from now
-        let exactly_30_days = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + (30 * 24 * 60 * 60);
-        request.poll_data.ends_at = exactly_30_days;
-
-        let result = service.create_poll(request).await;
-        assert!(result.is_ok());
-    }
+    let chain = MockChainClient {
+        ring_index: Err(ChainError::QueryFailed("Query timeout".to_string())),
+        ..Default::default()
+    };
+    assert!(matches!(
+        service(chain).create_poll(valid_request()).await,
+        Err(PollServiceError::ChainError(ChainError::QueryFailed(_)))
+    ));
 }

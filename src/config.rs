@@ -1,8 +1,7 @@
 use clap::Parser;
-use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-#[derive(Parser, Debug, Clone, Serialize, Deserialize)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "persons-only-votations")]
 #[command(about = "A voting system that requires proof of personhood")]
 pub struct Config {

@@ -1,6 +1,7 @@
 use super::{crypto_helpers::TestKeyPair, setup::E2eTestSetup, test_helpers::*, utils::TestPoll};
-use crate::crypto::contexts::{context_to_string, generate_poll_context};
+use crate::crypto::contexts::generate_poll_context;
 use crate::crypto::homomorphic::encrypt_vote_with_public_key;
+use crate::services::vote_service::encrypted_vote_message;
 use crate::storage::models::vote::VoteType;
 
 #[tokio::test]
@@ -126,7 +127,10 @@ async fn run_encrypted_poll(
         .enumerate()
         .map(|(i, vote)| {
             let voter = recognized_keypair(setup, i + 1);
-            (voter, encrypt_vote_with_public_key(&public_key, vote).unwrap())
+            (
+                voter,
+                encrypt_vote_with_public_key(&public_key, vote).unwrap(),
+            )
         })
         .collect();
 
@@ -162,7 +166,10 @@ async fn run_encrypted_poll(
         .as_u64()
         .expect("Tally should contain total_yay_votes");
 
-    (yay, get_encrypted_votes_via_api(setup, &poll_id).await.len())
+    (
+        yay,
+        get_encrypted_votes_via_api(setup, &poll_id).await.len(),
+    )
 }
 
 async fn fetch_server_public_key(setup: &E2eTestSetup) -> String {
@@ -193,20 +200,17 @@ async fn cast_encrypted_vote(
     ring_proof: Option<String>,
 ) -> reqwest::Response {
     let poll_id_num: u32 = poll_id.parse().expect("Invalid poll_id");
-    let context_bytes = generate_poll_context(poll_id_num);
-    let message = serde_json::to_string(&serde_json::json!({
-        "poll_id": poll_id_num,
-        "encrypted_vote": encrypted_vote,
-        "context": context_to_string(&context_bytes)
-    }))
-    .unwrap();
+    let context = generate_poll_context(poll_id_num);
+    let message = encrypted_vote_message(poll_id_num, encrypted_vote, &hex::encode(context));
 
     let ring_proof = match ring_proof {
         Some(proof) => proof,
-        None => ring_proof_for(setup, voter, &context_bytes, message.as_bytes()).await,
+        None => ring_proof_for(setup, voter, &context, &message)
+            .await
+            .expect("Ring proof generation failed"),
     };
     let voter_signature = voter
-        .sign_message(message.as_bytes())
+        .sign_message(&message)
         .expect("Failed to sign message");
 
     setup
@@ -227,7 +231,10 @@ async fn cast_encrypted_vote(
         .expect("Failed to send encrypted vote request")
 }
 
-async fn get_encrypted_votes_via_api(setup: &E2eTestSetup, poll_id: &str) -> Vec<serde_json::Value> {
+async fn get_encrypted_votes_via_api(
+    setup: &E2eTestSetup,
+    poll_id: &str,
+) -> Vec<serde_json::Value> {
     let response = setup
         .http_client
         .get(format!(

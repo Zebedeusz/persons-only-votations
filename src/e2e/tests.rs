@@ -8,12 +8,9 @@ async fn test_people_chain_connection() {
         .await
         .expect("Failed to setup e2e test environment");
 
-    let people_client = setup
-        .people_client()
-        .expect("People client should be available");
-
-    // Basic chain connectivity test
-    let chain_info = people_client
+    let chain_info = setup
+        .chain
+        .client()
         .blocks()
         .at_latest()
         .await

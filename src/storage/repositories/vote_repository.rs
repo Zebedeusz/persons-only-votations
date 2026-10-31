@@ -1,6 +1,5 @@
 use crate::storage::models::vote::{EncryptedVote, Vote};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, MutexGuard};
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
@@ -15,244 +14,103 @@ pub enum VoteRepositoryError {
 
 pub type Result<T> = std::result::Result<T, VoteRepositoryError>;
 
-pub trait VoteRepository: Send + Sync {
-    fn create_vote(&self, vote: Vote) -> Result<()>;
-    fn update_vote(&self, vote: Vote) -> Result<()>;
-    fn get_votes_by_poll(&self, poll_id: u32) -> Result<Vec<Vote>>;
-    fn get_vote_by_poll_and_voter(
-        &self,
-        poll_id: u32,
-        voter_member_hex: &str,
-    ) -> Result<Option<Vote>>;
-    fn get_vote_by_poll_and_alias(&self, poll_id: u32, voter_alias: &str) -> Result<Option<Vote>>;
-    fn count_votes_by_poll(&self, poll_id: u32) -> Result<(u32, u32)>; // (yay_count, nay_count)
-
-    // Encrypted voting methods
-    fn create_encrypted_vote(&self, encrypted_vote: EncryptedVote) -> Result<()>;
-    fn get_encrypted_votes_by_poll(&self, poll_id: u32) -> Result<Vec<EncryptedVote>>;
-    fn get_encrypted_vote_by_poll_and_voter(
-        &self,
-        poll_id: u32,
-        voter_member_hex: &str,
-    ) -> Result<Option<EncryptedVote>>;
+/// In-memory store for commit-reveal votes and encrypted ballots.
+// ponytail: every lookup is a linear scan; add per-poll indexes when votes exceed ~10k
+#[derive(Default)]
+pub struct VoteRepository {
+    votes: Mutex<Vec<Vote>>,
+    encrypted_votes: Mutex<Vec<EncryptedVote>>,
 }
 
-pub struct InMemoryVoteRepository {
-    votes: Arc<Mutex<Vec<Vote>>>,
-    encrypted_votes: Arc<Mutex<Vec<EncryptedVote>>>,
-    voter_poll_index: Arc<Mutex<HashMap<(u32, String), bool>>>, // (poll_id, voter_key) -> exists
-    alias_poll_index: Arc<Mutex<HashMap<(u32, String), bool>>>, // (poll_id, voter_alias) -> exists
-    encrypted_voter_poll_index: Arc<Mutex<HashMap<(u32, String), bool>>>, // (poll_id, voter_key) -> exists for encrypted votes
+fn lock<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>> {
+    mutex.lock().map_err(|_| VoteRepositoryError::LockError)
 }
 
-impl Default for InMemoryVoteRepository {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl InMemoryVoteRepository {
-    pub fn new() -> Self {
-        Self {
-            votes: Arc::new(Mutex::new(Vec::new())),
-            encrypted_votes: Arc::new(Mutex::new(Vec::new())),
-            voter_poll_index: Arc::new(Mutex::new(HashMap::new())),
-            alias_poll_index: Arc::new(Mutex::new(HashMap::new())),
-            encrypted_voter_poll_index: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
-impl VoteRepository for InMemoryVoteRepository {
-    fn create_vote(&self, vote: Vote) -> Result<()> {
-        let mut votes = self
-            .votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-        let mut voter_poll_index = self
-            .voter_poll_index
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-        let mut alias_poll_index = self
-            .alias_poll_index
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-
-        // Check for duplicate vote by member key
-        let voter_index_key = (vote.poll_id, vote.voter_member_hex.clone());
-        if voter_poll_index.contains_key(&voter_index_key) {
+impl VoteRepository {
+    /// Rejects a second vote on the same poll from the same member key or ring alias.
+    pub fn create_vote(&self, vote: Vote) -> Result<()> {
+        let mut votes = lock(&self.votes)?;
+        let duplicate = votes.iter().find(|v| {
+            v.poll_id == vote.poll_id
+                && (v.voter_member_hex == vote.voter_member_hex
+                    || v.voter_alias == vote.voter_alias)
+        });
+        if let Some(existing) = duplicate {
             return Err(VoteRepositoryError::DuplicateVote {
                 poll_id: vote.poll_id,
-                voter_key: vote.voter_member_hex.clone(),
+                voter_key: if existing.voter_member_hex == vote.voter_member_hex {
+                    vote.voter_member_hex
+                } else {
+                    vote.voter_alias
+                },
             });
         }
-
-        // Check for duplicate vote by alias (primary privacy check)
-        let alias_index_key = (vote.poll_id, vote.voter_alias.clone());
-        if alias_poll_index.contains_key(&alias_index_key) {
-            return Err(VoteRepositoryError::DuplicateVote {
-                poll_id: vote.poll_id,
-                voter_key: vote.voter_alias.clone(),
-            });
-        }
-
         votes.push(vote);
-        voter_poll_index.insert(voter_index_key, true);
-        alias_poll_index.insert(alias_index_key, true);
-
         Ok(())
     }
 
-    fn update_vote(&self, updated_vote: Vote) -> Result<()> {
-        let mut votes = self
-            .votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-
-        // Find and update the vote by poll_id and voter_member_hex
-        let vote_index = votes
-            .iter()
-            .position(|vote| {
-                vote.poll_id == updated_vote.poll_id
-                    && vote.voter_member_hex == updated_vote.voter_member_hex
+    pub fn update_vote(&self, updated: Vote) -> Result<()> {
+        let mut votes = lock(&self.votes)?;
+        let slot = votes
+            .iter_mut()
+            .find(|v| {
+                v.poll_id == updated.poll_id && v.voter_member_hex == updated.voter_member_hex
             })
-            .ok_or(VoteRepositoryError::VoteNotFound(updated_vote.poll_id))?;
-
-        votes[vote_index] = updated_vote;
+            .ok_or(VoteRepositoryError::VoteNotFound(updated.poll_id))?;
+        *slot = updated;
         Ok(())
     }
 
-    fn get_votes_by_poll(&self, poll_id: u32) -> Result<Vec<Vote>> {
-        let votes = self
-            .votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-        Ok(votes
+    pub fn get_votes_by_poll(&self, poll_id: u32) -> Result<Vec<Vote>> {
+        Ok(lock(&self.votes)?
             .iter()
-            .filter(|vote| vote.poll_id == poll_id)
+            .filter(|v| v.poll_id == poll_id)
             .cloned()
             .collect())
     }
 
-    fn get_vote_by_poll_and_voter(
+    pub fn get_vote_by_poll_and_voter(
         &self,
         poll_id: u32,
         voter_member_hex: &str,
     ) -> Result<Option<Vote>> {
-        let votes = self
-            .votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-
-        Ok(votes
+        Ok(lock(&self.votes)?
             .iter()
-            .find(|vote| vote.poll_id == poll_id && vote.voter_member_hex == voter_member_hex)
+            .find(|v| v.poll_id == poll_id && v.voter_member_hex == voter_member_hex)
             .cloned())
     }
 
-    fn get_vote_by_poll_and_alias(&self, poll_id: u32, voter_alias: &str) -> Result<Option<Vote>> {
-        let votes = self
-            .votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-
-        Ok(votes
+    pub fn create_encrypted_vote(&self, vote: EncryptedVote) -> Result<()> {
+        let mut votes = lock(&self.encrypted_votes)?;
+        if votes
             .iter()
-            .find(|vote| vote.poll_id == poll_id && vote.voter_alias == voter_alias)
-            .cloned())
-    }
-
-    fn count_votes_by_poll(&self, poll_id: u32) -> Result<(u32, u32)> {
-        use crate::storage::models::vote::VoteType;
-
-        let votes = self
-            .votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-        let poll_votes: Vec<&Vote> = votes
-            .iter()
-            .filter(|vote| vote.poll_id == poll_id)
-            .collect();
-
-        let yay_count = poll_votes
-            .iter()
-            .filter(|vote| {
-                if let Some(vote_type) = &vote.vote_type {
-                    *vote_type == VoteType::Yay
-                } else {
-                    false
-                }
-            })
-            .count() as u32;
-
-        let nay_count = poll_votes
-            .iter()
-            .filter(|vote| {
-                if let Some(vote_type) = &vote.vote_type {
-                    *vote_type == VoteType::Nay
-                } else {
-                    false
-                }
-            })
-            .count() as u32;
-
-        Ok((yay_count, nay_count))
-    }
-
-    // Phase 2: Encrypted voting implementations
-    fn create_encrypted_vote(&self, encrypted_vote: EncryptedVote) -> Result<()> {
-        let mut encrypted_votes = self
-            .encrypted_votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-        let mut encrypted_voter_poll_index = self
-            .encrypted_voter_poll_index
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-
-        // Check for duplicate encrypted vote by member key
-        let voter_index_key = (
-            encrypted_vote.poll_id,
-            encrypted_vote.voter_member_hex.clone(),
-        );
-        if encrypted_voter_poll_index.contains_key(&voter_index_key) {
+            .any(|v| v.poll_id == vote.poll_id && v.voter_member_hex == vote.voter_member_hex)
+        {
             return Err(VoteRepositoryError::DuplicateVote {
-                poll_id: encrypted_vote.poll_id,
-                voter_key: encrypted_vote.voter_member_hex.clone(),
+                poll_id: vote.poll_id,
+                voter_key: vote.voter_member_hex,
             });
         }
-
-        encrypted_votes.push(encrypted_vote);
-        encrypted_voter_poll_index.insert(voter_index_key, true);
-
+        votes.push(vote);
         Ok(())
     }
 
-    fn get_encrypted_votes_by_poll(&self, poll_id: u32) -> Result<Vec<EncryptedVote>> {
-        let encrypted_votes = self
-            .encrypted_votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-        Ok(encrypted_votes
+    pub fn get_encrypted_votes_by_poll(&self, poll_id: u32) -> Result<Vec<EncryptedVote>> {
+        Ok(lock(&self.encrypted_votes)?
             .iter()
-            .filter(|vote| vote.poll_id == poll_id)
+            .filter(|v| v.poll_id == poll_id)
             .cloned()
             .collect())
     }
 
-    fn get_encrypted_vote_by_poll_and_voter(
+    pub fn get_encrypted_vote_by_poll_and_voter(
         &self,
         poll_id: u32,
         voter_member_hex: &str,
     ) -> Result<Option<EncryptedVote>> {
-        let encrypted_votes = self
-            .encrypted_votes
-            .lock()
-            .map_err(|_| VoteRepositoryError::LockError)?;
-
-        Ok(encrypted_votes
+        Ok(lock(&self.encrypted_votes)?
             .iter()
-            .find(|vote| vote.poll_id == poll_id && vote.voter_member_hex == voter_member_hex)
+            .find(|v| v.poll_id == poll_id && v.voter_member_hex == voter_member_hex)
             .cloned())
     }
 }

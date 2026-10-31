@@ -1,19 +1,26 @@
+use crate::chain::PeopleMultiClient;
 use crate::e2e::config::E2eConfig;
 use std::time::Duration;
-use subxt::{OnlineClient, PolkadotConfig};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 pub struct E2eTestSetup {
     pub config: E2eConfig,
-    pub people_client: Option<OnlineClient<PolkadotConfig>>,
+    pub chain: PeopleMultiClient,
     pub http_client: reqwest::Client,
 }
 
 impl E2eTestSetup {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = E2eConfig::from_env();
-
-        let people_client = Some(Self::connect_to_people_chain(&config).await?);
+        let chain = PeopleMultiClient::new_with_retry(
+            &config.people_chain_endpoint,
+            config.chain_connection_retries,
+        )
+        .await?;
+        tracing::info!(
+            "Connected to people chain at {}",
+            config.people_chain_endpoint
+        );
 
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.test_timeout_seconds))
@@ -21,98 +28,26 @@ impl E2eTestSetup {
 
         Ok(Self {
             config,
-            people_client,
+            chain,
             http_client,
         })
     }
 
-    async fn connect_to_people_chain(
-        config: &E2eConfig,
-    ) -> Result<OnlineClient<PolkadotConfig>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut retries = 0;
-
-        loop {
-            match timeout(
-                Duration::from_secs(10),
-                OnlineClient::<PolkadotConfig>::from_url(&config.people_chain_endpoint),
-            )
-            .await
-            {
-                Ok(Ok(client)) => {
-                    tracing::info!(
-                        "Connected to people chain at {}",
-                        config.people_chain_endpoint
-                    );
-                    return Ok(client);
-                }
-                Ok(Err(e)) => {
-                    retries += 1;
-                    if retries > config.chain_connection_retries {
-                        return Err(format!(
-                            "Failed to connect to people chain after {} retries: {}",
-                            config.chain_connection_retries, config.people_chain_endpoint
-                        )
-                        .into());
-                    }
-                    tracing::warn!(
-                        "Failed to connect to people chain (attempt {}/{}): {:?}",
-                        retries,
-                        config.chain_connection_retries,
-                        e
-                    );
-                }
-                Err(timeout_err) => {
-                    retries += 1;
-                    if retries > config.chain_connection_retries {
-                        return Err(format!(
-                            "Failed to connect to people chain after {} retries: timeout",
-                            config.chain_connection_retries
-                        )
-                        .into());
-                    }
-                    tracing::warn!(
-                        "Failed to connect to people chain (attempt {}/{}): timeout - {:?}",
-                        retries,
-                        config.chain_connection_retries,
-                        timeout_err
-                    );
-                    sleep(Duration::from_secs(2)).await;
-                }
-            }
-        }
-    }
-
     pub async fn wait_for_server(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let health_endpoint = format!("{}/health", self.config.server_base_url);
-        let mut retries = 0;
-
         tracing::info!("Waiting for server at {}", health_endpoint);
 
-        loop {
+        for attempt in 1..=10 {
             match self.http_client.get(&health_endpoint).send().await {
-                Ok(response) if response.status().is_success() => {
-                    tracing::info!("Server is ready at {}", self.config.server_base_url);
-                    return Ok(());
-                }
-                Ok(response) => {
-                    let status = response.status();
-                    let body = response.text().await.unwrap_or_default();
-                    tracing::warn!("Server health check failed (attempt {}): HTTP {} - {}", retries + 1, status, body);
-                }
-                Err(e) => {
-                    tracing::warn!("Server health check error (attempt {}): {}", retries + 1, e);
-                }
-            }
-
-            retries += 1;
-            if retries > 10 {
-                return Err(format!("Server not available after {} retries at {}", retries, health_endpoint).into());
+                Ok(response) if response.status().is_success() => return Ok(()),
+                Ok(response) => tracing::warn!(
+                    "Server health check failed (attempt {attempt}): HTTP {}",
+                    response.status()
+                ),
+                Err(e) => tracing::warn!("Server health check error (attempt {attempt}): {e}"),
             }
             sleep(Duration::from_secs(1)).await;
         }
-    }
-
-    pub fn people_client(&self) -> Option<&OnlineClient<PolkadotConfig>> {
-        self.people_client.as_ref()
+        Err(format!("Server not available at {health_endpoint}").into())
     }
 }

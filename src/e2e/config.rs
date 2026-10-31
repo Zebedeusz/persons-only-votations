@@ -1,22 +1,19 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::fs;
-use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TestUser {
-    pub id: u32,
     pub secret_scalar: String,
-    pub member_bytes: Vec<u8>,
     pub member_hex: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TestUsers {
     pub recognized_persons: Vec<TestUser>,
     pub onboarding_queue: Vec<TestUser>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct E2eConfig {
     pub people_chain_endpoint: String,
     pub server_base_url: String,
@@ -28,51 +25,34 @@ pub struct E2eConfig {
 impl E2eConfig {
     pub fn from_env() -> Self {
         let _ = dotenvy::from_filename(".env.e2e");
-
-        let test_users = Self::load_test_users();
+        let var =
+            |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.to_string());
 
         Self {
-            people_chain_endpoint: std::env::var("E2E_PEOPLE_CHAIN_ENDPOINT")
-                .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string()),
-            server_base_url: std::env::var("E2E_SERVER_BASE_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string()),
-            test_timeout_seconds: std::env::var("E2E_TEST_TIMEOUT_SECONDS")
-                .unwrap_or_else(|_| "30".to_string())
-                .parse()
-                .unwrap_or(30),
-            chain_connection_retries: std::env::var("E2E_CHAIN_CONNECTION_RETRIES")
-                .unwrap_or_else(|_| "5".to_string())
+            people_chain_endpoint: var("E2E_PEOPLE_CHAIN_ENDPOINT", "ws://127.0.0.1:9944"),
+            server_base_url: var("E2E_SERVER_BASE_URL", "http://127.0.0.1:3000"),
+            test_timeout_seconds: var("E2E_TEST_TIMEOUT_SECONDS", "30").parse().unwrap_or(30),
+            chain_connection_retries: var("E2E_CHAIN_CONNECTION_RETRIES", "5")
                 .parse()
                 .unwrap_or(5),
-            test_users,
+            test_users: Self::load_test_users(&var(
+                "E2E_TEST_USERS_CONFIG",
+                "src/e2e/test_users.json",
+            )),
         }
     }
 
-    fn load_test_users() -> Option<TestUsers> {
-        let config_path = std::env::var("E2E_TEST_USERS_CONFIG")
-            .unwrap_or_else(|_| "src/e2e/test_users.json".to_string());
-
-        if !Path::new(&config_path).exists() {
-            tracing::warn!("Test users config file not found at: {config_path}");
-            tracing::warn!(
-                "Copy src/e2e/test_users.json.example to src/e2e/test_users.json and fill in the credentials"
-            );
-            return None;
-        }
-
-        match fs::read_to_string(&config_path) {
-            Ok(content) => match serde_json::from_str::<TestUsers>(&content) {
-                Ok(users) => Some(users),
-                Err(e) => {
-                    tracing::error!("Failed to parse test users config: {e}");
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::error!("Failed to read test users config file: {e}");
-                None
-            }
-        }
+    fn load_test_users(path: &str) -> Option<TestUsers> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| {
+                tracing::warn!(
+                    "Test users config not readable at {path}: {e}. Generate it with devtools/scripts/generate-test-users.sh"
+                )
+            })
+            .ok()?;
+        serde_json::from_str(&content)
+            .map_err(|e| tracing::error!("Failed to parse test users config: {e}"))
+            .ok()
     }
 
     pub fn get_recognized_person(&self, index: usize) -> Option<&TestUser> {
@@ -81,17 +61,5 @@ impl E2eConfig {
 
     pub fn get_onboarding_user(&self, index: usize) -> Option<&TestUser> {
         self.test_users.as_ref()?.onboarding_queue.get(index)
-    }
-}
-
-impl Default for E2eConfig {
-    fn default() -> Self {
-        Self {
-            people_chain_endpoint: "ws://127.0.0.1:9944".to_string(),
-            server_base_url: "http://127.0.0.1:3000".to_string(),
-            test_timeout_seconds: 30,
-            chain_connection_retries: 5,
-            test_users: None,
-        }
     }
 }

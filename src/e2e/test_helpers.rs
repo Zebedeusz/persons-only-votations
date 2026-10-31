@@ -3,7 +3,11 @@ use super::{
     setup::E2eTestSetup,
     utils::{TestHelpers, TestPoll},
 };
+use crate::chain::ChainClient;
+use crate::crypto::commitments::generate_nonce;
 use std::collections::HashMap;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 pub async fn setup_test_environment() -> E2eTestSetup {
     let _ = tracing_subscriber::fmt::try_init();
@@ -11,79 +15,57 @@ pub async fn setup_test_environment() -> E2eTestSetup {
     let setup = E2eTestSetup::new()
         .await
         .expect("Failed to setup e2e test environment");
-
     setup
         .wait_for_server()
         .await
         .expect("Server should be available");
-
-    // Verify required users are registered on the People chain
     verify_users_registered_on_chain(&setup).await;
-
     setup
 }
 
-/// Verifies that required test users are properly registered on the People chain
+/// Panics unless the first six recognized test users are included in rings on chain.
 pub async fn verify_users_registered_on_chain(setup: &E2eTestSetup) {
-    use super::utils::TestHelpers;
+    let required_user_count = 6;
 
-    let people_client = setup.people_client().expect("People client should be available");
-    let required_user_count = 6; // Ensure we have at least 6 users for homomorphic tests
-
-    // First verify People chain connectivity
-    match people_client.blocks().at_latest().await {
-        Ok(chain_info) => {
-            let block_number = chain_info.header().number;
-            tracing::info!("✅ Connected to People chain at block: {}", block_number);
-            if block_number == 0 {
-                tracing::warn!("⚠️  People chain is at block 0, may not be fully initialized");
-            }
-        }
-        Err(e) => {
-            panic!("❌ Failed to connect to People chain: {}. Ensure the People chain is running and accessible.", e);
-        }
-    }
+    let block_number = setup
+        .chain
+        .client()
+        .blocks()
+        .at_latest()
+        .await
+        .expect(
+            "Failed to connect to People chain. Ensure the People chain is running and accessible.",
+        )
+        .header()
+        .number;
+    tracing::info!("Connected to People chain at block: {block_number}");
 
     for i in 0..required_user_count {
-        if let Some(user) = setup.config.get_recognized_person(i) {
-            // Check if user data is populated (not empty)
-            if user.secret_scalar.is_empty() || user.member_hex.is_empty() || user.member_bytes.is_empty() {
-                panic!("❌ Test user {} has empty credentials. Run the chain setup script to populate user data.", i);
-            }
-
-            // Verify user is actually registered in a ring on the chain
-            match TestHelpers::get_voter_ring_index_from_chain(&user.member_hex, setup).await {
-                Ok(ring_index) => {
-                    tracing::info!("✅ User {} (hex: {}) is registered in ring {}", i, &user.member_hex[0..8], ring_index);
-
-                    // Verify the ring has sufficient members
-                    match TestHelpers::get_ring_keys_from_chain(ring_index, setup).await {
-                        Ok(ring_keys) => {
-                            if ring_keys.len() < 2 {
-                                tracing::warn!("⚠️  Ring {} only has {} members, may affect ring proof generation", ring_index, ring_keys.len());
-                            } else {
-                                tracing::info!("✅ Ring {} has {} members", ring_index, ring_keys.len());
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("❌ Failed to get ring keys for user {} in ring {}: {}", i, ring_index, e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    if e.to_string().contains("Person is not included in any ring") {
-                        panic!("❌ Test user {} ({}) is not included in any ring. User may be in onboarding status. Ensure users are properly registered and included in active rings.", i, &user.member_hex[0..8]);
-                    } else {
-                        panic!("❌ Failed to verify ring membership for test user {} ({}): {}. Check People chain setup.", i, &user.member_hex[0..8], e);
-                    }
-                }
-            }
-        } else {
-            panic!("❌ Test user {} not found in configuration. Ensure test_users.json has at least {} users.", i, required_user_count);
+        let user = setup.config.get_recognized_person(i).unwrap_or_else(|| {
+            panic!("Test user {i} not found. Ensure test_users.json has at least {required_user_count} users.")
+        });
+        if user.secret_scalar.is_empty() || user.member_hex.is_empty() {
+            panic!(
+                "Test user {i} has empty credentials. Run the chain setup script to populate user data."
+            );
         }
+        let ring_index = setup
+            .chain
+            .ring_index(&user.member_hex)
+            .await
+            .unwrap_or_else(|e| panic!("Failed to verify ring membership for test user {i}: {e}"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Test user {i} ({}) is not included in any ring. Ensure users are registered and included in active rings.",
+                    &user.member_hex[0..8]
+                )
+            });
+        let ring_size = TestHelpers::get_ring_keys_from_chain(ring_index, setup)
+            .await
+            .map(|keys| keys.len())
+            .unwrap_or_else(|e| panic!("Failed to get ring keys for ring {ring_index}: {e}"));
+        tracing::info!("User {i} is in ring {ring_index} with {ring_size} members");
     }
-
-    tracing::info!("✅ Verified {} test users are properly registered in People chain rings", required_user_count);
 }
 
 /// Keypair of the recognized test user at `index` in test_users.json.
@@ -102,36 +84,19 @@ pub async fn ring_proof_for(
     voter: &TestKeyPair,
     context: &[u8; 32],
     message: &[u8],
-) -> String {
-    let ring_index = TestHelpers::get_voter_ring_index_from_chain(&voter.member_hex, setup)
-        .await
-        .unwrap_or_else(|e| panic!("Failed to get ring index for voter: {e}"));
-    let ring_keys = TestHelpers::get_ring_keys_from_chain(ring_index, setup)
-        .await
-        .unwrap_or_else(|e| panic!("Failed to get ring keys for ring {ring_index}: {e}"));
-    voter
-        .generate_ring_proof(ring_keys.into_iter(), context, message)
-        .unwrap_or_else(|e| panic!("Ring proof generation failed: {e}"))
+) -> Result<String> {
+    let ring_index = setup
+        .chain
+        .ring_index(&voter.member_hex)
+        .await?
+        .ok_or("Person is not included in any ring (may be onboarding)")?;
+    let ring_keys = TestHelpers::get_ring_keys_from_chain(ring_index, setup).await?;
+    voter.generate_ring_proof(ring_keys.into_iter(), context, message)
 }
 
+/// (creator, voter) = recognized users 0 and 1.
 pub fn get_test_users(setup: &E2eTestSetup) -> (TestKeyPair, TestKeyPair) {
-    let creator_user = setup
-        .config
-        .get_recognized_person(0)
-        .expect("Recognized creator user should be configured");
-    let voter_user = setup
-        .config
-        .get_recognized_person(1)
-        .expect("Recognized voter user should be configured");
-
-    let creator_keypair =
-        TestKeyPair::from_secret_scalar(&creator_user.secret_scalar, &creator_user.member_hex)
-            .expect("Failed to create creator keypair");
-    let voter_keypair =
-        TestKeyPair::from_secret_scalar(&voter_user.secret_scalar, &voter_user.member_hex)
-            .expect("Failed to create voter keypair");
-
-    (creator_keypair, voter_keypair)
+    (recognized_keypair(setup, 0), recognized_keypair(setup, 1))
 }
 
 pub fn prepare_voting_poll_data() -> TestPoll {
@@ -155,90 +120,47 @@ pub fn prepare_impersonation_test_poll_data() -> TestPoll {
     }
 }
 
+async fn post_poll(
+    setup: &E2eTestSetup,
+    test_poll: &TestPoll,
+    creator: &TestKeyPair,
+    duration_seconds: i64,
+) -> reqwest::Response {
+    setup
+        .http_client
+        .post(format!("{}/polls", setup.config.server_base_url))
+        .json(&test_poll.to_signed_request(creator, duration_seconds))
+        .send()
+        .await
+        .expect("Failed to send poll creation request")
+}
+
+/// Creates a poll that ends in one hour and returns its id.
 pub async fn create_poll(
     setup: &E2eTestSetup,
     test_poll: &TestPoll,
-    creator_keypair: &TestKeyPair,
+    creator: &TestKeyPair,
 ) -> String {
-    let poll_json = test_poll.to_json_with_keypair(creator_keypair);
-    let response = setup
-        .http_client
-        .post(format!("{}/polls", setup.config.server_base_url))
-        .header("Content-Type", "application/json")
-        .json(&poll_json)
-        .send()
-        .await
-        .expect("Failed to send poll creation request");
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let error_text = response.text().await.unwrap_or_default();
-        panic!("Failed to create poll: {status} - {error_text}");
-    }
-
-    let response_body: serde_json::Value = response
-        .json()
-        .await
-        .expect("Failed to parse poll creation response");
-
-    response_body["poll_id"]
-        .as_u64()
-        .expect("Poll ID not found in response")
-        .to_string()
+    create_timed_poll(setup, test_poll, creator, 3600).await
 }
 
 pub async fn create_timed_poll(
     setup: &E2eTestSetup,
     test_poll: &TestPoll,
-    creator_keypair: &TestKeyPair,
+    creator: &TestKeyPair,
     duration_seconds: i64,
 ) -> String {
-    let ends_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-        + duration_seconds;
-
-    let message = format!(
-        r#"{{"name":"{}","description":"{}","ends_at":{}}}"#,
-        test_poll.title, test_poll.description, ends_at
-    );
-
-    let signature = creator_keypair
-        .sign_message(message.as_bytes())
-        .expect("Failed to sign message");
-
-    let poll_json = serde_json::json!({
-        "creator_member_hex": creator_keypair.member_hex,
-        "creator_signature": signature,
-        "poll_data": {
-            "name": test_poll.title,
-            "description": test_poll.description,
-            "ends_at": ends_at
-        }
-    });
-
-    let response = setup
-        .http_client
-        .post(format!("{}/polls", setup.config.server_base_url))
-        .header("Content-Type", "application/json")
-        .json(&poll_json)
-        .send()
-        .await
-        .expect("Failed to send poll creation request");
-
+    let response = post_poll(setup, test_poll, creator, duration_seconds).await;
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
         panic!("Failed to create poll: {status} - {error_text}");
     }
-
-    let response_body: serde_json::Value = response
+    let body: serde_json::Value = response
         .json()
         .await
         .expect("Failed to parse poll creation response");
-
-    response_body["poll_id"]
+    body["poll_id"]
         .as_u64()
         .expect("Poll ID not found in response")
         .to_string()
@@ -248,79 +170,53 @@ pub async fn assert_poll_created_correctly(
     setup: &E2eTestSetup,
     poll_id: &str,
     expected_poll: &TestPoll,
-    creator_keypair: &TestKeyPair,
+    creator: &TestKeyPair,
 ) {
-    let retrieved_poll =
+    let poll =
         TestHelpers::get_poll_via_api(&setup.http_client, &setup.config.server_base_url, poll_id)
             .await
             .expect("Failed to retrieve poll via API");
 
-    assert_eq!(retrieved_poll["name"], expected_poll.title);
-    assert_eq!(retrieved_poll["description"], expected_poll.description);
-    assert_eq!(retrieved_poll["is_active"], true);
-    assert!(retrieved_poll["id"].is_number());
-    assert!(retrieved_poll["creator_member_hex"].is_string());
-    assert_eq!(
-        retrieved_poll["creator_member_hex"],
-        creator_keypair.member_hex
-    );
-    assert!(retrieved_poll["created_at"].is_number());
-    assert!(retrieved_poll["ends_at"].is_number());
+    assert_eq!(poll["name"], expected_poll.title);
+    assert_eq!(poll["description"], expected_poll.description);
+    assert_eq!(poll["is_active"], true);
+    assert!(poll["id"].is_number());
+    assert_eq!(poll["creator_member_hex"], creator.member_hex);
+    assert!(poll["created_at"].is_number());
+    assert!(poll["ends_at"].is_number());
 }
 
-pub async fn submit_vote(
-    setup: &E2eTestSetup,
-    poll_id: &str,
-    voter_keypair: &TestKeyPair,
-    choice: &str,
-) {
-    let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-    let vote_data = TestHelpers::create_signed_vote_data_with_real_ring_proof(
-        poll_id_num,
-        choice,
-        voter_keypair,
-        setup,
-    )
-    .await
-    .expect("Failed to create vote data with real ring proof");
-
-    let _vote_response = TestHelpers::commit_vote_via_api(
-        &setup.http_client,
-        &setup.config.server_base_url,
-        poll_id,
-        &vote_data,
-    )
-    .await
-    .expect("Failed to submit vote");
+/// Commits a vote with a fresh nonce; the vote is never revealed.
+pub async fn submit_vote(setup: &E2eTestSetup, poll_id: &str, voter: &TestKeyPair, choice: &str) {
+    commit_vote(setup, poll_id, voter, choice, &generate_nonce())
+        .await
+        .expect("Failed to submit vote");
 }
 
 pub async fn assert_vote_recorded(setup: &E2eTestSetup, poll_id: &str, expected_poll: &TestPoll) {
-    let updated_poll =
+    let poll =
         TestHelpers::get_poll_via_api(&setup.http_client, &setup.config.server_base_url, poll_id)
             .await
             .expect("Failed to retrieve updated poll");
-
-    assert_eq!(updated_poll["name"], expected_poll.title);
+    assert_eq!(poll["name"], expected_poll.title);
 }
 
 pub async fn commit_vote(
     setup: &E2eTestSetup,
     poll_id: &str,
-    voter_keypair: &TestKeyPair,
+    voter: &TestKeyPair,
     choice: &str,
     nonce: &[u8; 32],
-) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<serde_json::Value> {
     let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-
     let vote_data = TestHelpers::create_vote_commit_data_with_real_ring_proof(
         poll_id_num,
         choice,
-        voter_keypair,
+        voter,
         nonce,
         setup,
     )
     .await?;
-
     TestHelpers::commit_vote_via_api(
         &setup.http_client,
         &setup.config.server_base_url,
@@ -332,16 +228,16 @@ pub async fn commit_vote(
 
 pub fn create_reveal_data(
     poll_id: &str,
-    voter_keypair: &TestKeyPair,
+    voter: &TestKeyPair,
     choice: &str,
     nonce: &[u8; 32],
 ) -> HashMap<String, serde_json::Value> {
     let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-    TestHelpers::create_vote_reveal_data(poll_id_num, choice, voter_keypair, nonce)
+    TestHelpers::create_vote_reveal_data(poll_id_num, choice, voter, nonce)
 }
 
 pub async fn assert_vote_counts_hidden_during_voting(setup: &E2eTestSetup, poll_id: &str) {
-    let vote_counts_response = setup
+    let response = setup
         .http_client
         .get(format!(
             "{}/polls/{}/votes",
@@ -350,22 +246,16 @@ pub async fn assert_vote_counts_hidden_during_voting(setup: &E2eTestSetup, poll_
         .send()
         .await
         .expect("Failed to get vote counts");
-
-    if vote_counts_response.status().is_success() {
-        let vote_counts_during_voting: serde_json::Value = vote_counts_response
-            .json()
-            .await
-            .expect("Failed to parse vote counts response");
-
-        let yay_votes = vote_counts_during_voting["yay_votes"].as_u64().unwrap_or(0);
-        let nay_votes = vote_counts_during_voting["nay_votes"].as_u64().unwrap_or(0);
-
+    if response.status().is_success() {
+        let counts: serde_json::Value = response.json().await.expect("Failed to parse vote counts");
         assert_eq!(
-            yay_votes, 0,
+            counts["yay_votes"].as_u64().unwrap_or(0),
+            0,
             "Vote counts should be hidden during voting period"
         );
         assert_eq!(
-            nay_votes, 0,
+            counts["nay_votes"].as_u64().unwrap_or(0),
+            0,
             "Vote counts should be hidden during voting period"
         );
     }
@@ -379,9 +269,7 @@ pub async fn wait_for_poll_to_end_and_reveal(
 ) {
     tracing::info!("Waiting for poll to end...");
     tokio::time::sleep(tokio::time::Duration::from_secs(wait_seconds)).await;
-
-    tracing::info!("Revealing vote now that poll has ended...");
-    let _reveal_response = TestHelpers::reveal_vote_via_api(
+    TestHelpers::reveal_vote_via_api(
         &setup.http_client,
         &setup.config.server_base_url,
         poll_id,
@@ -392,7 +280,7 @@ pub async fn wait_for_poll_to_end_and_reveal(
 }
 
 pub async fn finalize_poll_and_assert_votes_counted(setup: &E2eTestSetup, poll_id: &str) {
-    let finalize_response = setup
+    let response = setup
         .http_client
         .post(format!(
             "{}/polls/{}/finalize",
@@ -401,25 +289,19 @@ pub async fn finalize_poll_and_assert_votes_counted(setup: &E2eTestSetup, poll_i
         .send()
         .await
         .expect("Failed to send finalize request");
-
-    let vote_counts = if finalize_response.status().is_success() {
-        let finalize_result: serde_json::Value = finalize_response
-            .json()
-            .await
-            .expect("Failed to parse finalize response");
-        finalize_result
-    } else {
-        let status = finalize_response.status();
-        let error_text = finalize_response.text().await.unwrap_or_default();
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
         panic!("Failed to finalize poll: {status} - {error_text}");
-    };
-
-    let yay_votes = vote_counts["yay_votes"].as_u64().unwrap_or(0);
-    let nay_votes = vote_counts["nay_votes"].as_u64().unwrap_or(0);
-    let total_votes = yay_votes + nay_votes;
-
+    }
+    let counts: serde_json::Value = response
+        .json()
+        .await
+        .expect("Failed to parse finalize response");
+    let total =
+        counts["yay_votes"].as_u64().unwrap_or(0) + counts["nay_votes"].as_u64().unwrap_or(0);
     assert!(
-        total_votes > 0,
+        total > 0,
         "At least one vote should be recorded after finalization"
     );
 }
@@ -429,89 +311,48 @@ pub async fn assert_final_poll_state(
     poll_id: &str,
     expected_poll: &TestPoll,
 ) {
-    let final_poll =
+    let poll =
         TestHelpers::get_poll_via_api(&setup.http_client, &setup.config.server_base_url, poll_id)
             .await
             .expect("Failed to retrieve poll after voting");
-
-    assert_eq!(final_poll["name"], expected_poll.title);
-    assert_eq!(final_poll["is_active"], false);
+    assert_eq!(poll["name"], expected_poll.title);
+    assert_eq!(poll["is_active"], false);
 }
 
+/// An onboarding user must fail either at ring-proof generation (not in a ring) or at the server.
 pub async fn test_onboarding_user_vote_rejection(setup: &E2eTestSetup, poll_id: &str) {
-    let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-
-    if let Some(onboarding_user) = setup.config.get_onboarding_user(0) {
-        let onboarding_keypair = TestKeyPair::from_secret_scalar(
-            &onboarding_user.secret_scalar,
-            &onboarding_user.member_hex,
-        )
-        .expect("Failed to create keypair for onboarding user");
-
-        let onboarding_vote_data_result =
-            TestHelpers::create_signed_vote_data_with_real_ring_proof(
-                poll_id_num,
-                "Nay",
-                &onboarding_keypair,
-                setup,
-            )
-            .await;
-
-        match onboarding_vote_data_result {
-            Ok(onboarding_vote_data) => {
-                let onboarding_vote_response = TestHelpers::commit_vote_via_api(
-                    &setup.http_client,
-                    &setup.config.server_base_url,
-                    poll_id,
-                    &onboarding_vote_data,
-                )
-                .await;
-
-                match onboarding_vote_response {
-                    Ok(_) => {
-                        panic!(
-                            "Vote by onboarding user should have been rejected but was accepted"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::info!(
-                            "Vote by onboarding user correctly rejected at server level: {}",
-                            e
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::info!(
-                    "Ring proof generation correctly failed for onboarding user: {}",
-                    e
-                );
-            }
-        }
-    } else {
+    let Some(onboarding_user) = setup.config.get_onboarding_user(0) else {
         tracing::warn!("No onboarding user configured, skipping onboarding user vote test");
+        return;
+    };
+    let onboarding_keypair = TestKeyPair::from_secret_scalar(
+        &onboarding_user.secret_scalar,
+        &onboarding_user.member_hex,
+    )
+    .expect("Failed to create keypair for onboarding user");
+
+    match commit_vote(
+        setup,
+        poll_id,
+        &onboarding_keypair,
+        "Nay",
+        &generate_nonce(),
+    )
+    .await
+    {
+        Ok(_) => panic!("Vote by onboarding user should have been rejected but was accepted"),
+        Err(e) => tracing::info!("Vote by onboarding user correctly rejected: {e}"),
     }
 }
 
+/// (legitimate keypair, keypair claiming the legitimate member key with a random secret).
 pub fn get_legitimate_and_fake_keypairs(setup: &E2eTestSetup) -> (TestKeyPair, TestKeyPair) {
-    let legitimate_user = setup
-        .config
-        .get_recognized_person(0)
-        .expect("Recognized user should be configured in test_users.json");
-
-    let legitimate_keypair = TestKeyPair::from_secret_scalar(
-        &legitimate_user.secret_scalar,
-        &legitimate_user.member_hex,
-    )
-    .expect("Failed to create legitimate keypair");
-
-    let malicious_keypair = TestKeyPair::generate();
-    let fake_impersonation_keypair = TestKeyPair {
-        member_hex: legitimate_user.member_hex.clone(),
-        secret: malicious_keypair.secret.clone(),
+    let legitimate = recognized_keypair(setup, 0);
+    let fake = TestKeyPair {
+        member_hex: legitimate.member_hex.clone(),
+        secret: TestKeyPair::generate().secret,
     };
-
-    (legitimate_keypair, fake_impersonation_keypair)
+    (legitimate, fake)
 }
 
 pub async fn attempt_malicious_poll_creation(
@@ -519,18 +360,9 @@ pub async fn attempt_malicious_poll_creation(
     test_poll: &TestPoll,
     fake_keypair: &TestKeyPair,
 ) {
-    let poll_json = test_poll.to_json_with_keypair(fake_keypair);
-    let poll_response = setup
-        .http_client
-        .post(format!("{}/polls", setup.config.server_base_url))
-        .header("Content-Type", "application/json")
-        .json(&poll_json)
-        .send()
-        .await
-        .expect("Failed to send poll creation request");
-
+    let response = post_poll(setup, test_poll, fake_keypair, 3600).await;
     assert!(
-        !poll_response.status().is_success(),
+        !response.status().is_success(),
         "Malicious poll creation should fail due to signature verification failure"
     );
 }
@@ -540,18 +372,10 @@ pub async fn attempt_malicious_vote(
     poll_id: &str,
     fake_keypair: &TestKeyPair,
 ) {
-    let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-    let malicious_vote_data_result = TestHelpers::create_signed_vote_data_with_real_ring_proof(
-        poll_id_num,
-        "Yay",
-        fake_keypair,
-        setup,
-    )
-    .await;
-
+    let result = commit_vote(setup, poll_id, fake_keypair, "Yay", &generate_nonce()).await;
     assert!(
-        malicious_vote_data_result.is_err(),
-        "Ring proof generation should fail for impersonated identity"
+        result.is_err(),
+        "Vote with an impersonated identity should be rejected"
     );
 }
 
@@ -560,28 +384,9 @@ pub async fn verify_legitimate_user_can_vote(
     poll_id: &str,
     legitimate_keypair: &TestKeyPair,
 ) {
-    tracing::info!("Verifying legitimate user can still vote with their real keypair");
-    let poll_id_num: u32 = poll_id.parse().expect("Invalid poll ID");
-
-    let legitimate_vote_data = TestHelpers::create_signed_vote_data_with_real_ring_proof(
-        poll_id_num,
-        "Nay",
-        legitimate_keypair,
-        setup,
-    )
-    .await
-    .expect("Failed to create vote data with real ring proof");
-
-    let legitimate_vote_response = TestHelpers::commit_vote_via_api(
-        &setup.http_client,
-        &setup.config.server_base_url,
-        poll_id,
-        &legitimate_vote_data,
-    )
-    .await;
-
+    let result = commit_vote(setup, poll_id, legitimate_keypair, "Nay", &generate_nonce()).await;
     assert!(
-        legitimate_vote_response.is_ok(),
+        result.is_ok(),
         "Legitimate user should be able to vote with their real keypair"
     );
 }

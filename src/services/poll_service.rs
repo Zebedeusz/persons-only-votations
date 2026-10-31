@@ -1,8 +1,8 @@
 use crate::chain::people_multi::{ChainClient, ChainError};
-use crate::crypto::contexts::{context_to_string, generate_poll_context};
+use crate::crypto::contexts::generate_poll_context;
 use crate::storage::models::poll::{CreatePollRequest, Poll, PollData};
-use crate::storage::repositories::poll_repository::{PollRepositoryError, Repository};
-use crate::utils::{TimeError, get_current_timestamp};
+use crate::storage::repositories::poll_repository::{PollRepository, PollRepositoryError};
+use crate::utils::get_current_timestamp;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -16,8 +16,6 @@ pub enum PollServiceError {
     ChainError(#[from] ChainError),
     #[error("Repository error: {0}")]
     RepositoryError(#[from] PollRepositoryError),
-    #[error("Time error: {0}")]
-    TimeError(#[from] TimeError),
 }
 
 pub type Result<T> = std::result::Result<T, PollServiceError>;
@@ -28,13 +26,18 @@ pub struct CreatePollResponse {
     pub context: String,
 }
 
+/// Message a creator signs: the poll data as JSON.
+pub fn poll_message(poll_data: &PollData) -> Vec<u8> {
+    serde_json::to_vec(poll_data).expect("PollData always serializes")
+}
+
 pub struct PollService {
-    repository: Arc<dyn Repository>,
+    repository: Arc<PollRepository>,
     chain_client: Arc<dyn ChainClient>,
 }
 
 impl PollService {
-    pub fn new(repository: Arc<dyn Repository>, chain_client: Arc<dyn ChainClient>) -> Self {
+    pub fn new(repository: Arc<PollRepository>, chain_client: Arc<dyn ChainClient>) -> Self {
         Self {
             repository,
             chain_client,
@@ -42,19 +45,16 @@ impl PollService {
     }
 
     pub async fn create_poll(&self, request: CreatePollRequest) -> Result<CreatePollResponse> {
-        self.validate_poll_data(&request.poll_data)?;
-
-        let message = self.create_signature_message(&request)?;
+        validate_poll_data(&request.poll_data)?;
 
         let signature_valid = self
             .chain_client
             .validate_signature(
                 &request.creator_member_hex,
                 &request.creator_signature,
-                &message,
+                &poll_message(&request.poll_data),
             )
             .await?;
-
         if !signature_valid {
             tracing::error!(
                 "Signature validation failed for member: {}",
@@ -65,12 +65,16 @@ impl PollService {
             ));
         }
 
-        let person_verified = self
+        // A person counts as verified once included in a ring that has a root
+        let ring_index = self
             .chain_client
-            .verify_personhood(&request.creator_member_hex, &request.creator_signature)
+            .ring_index(&request.creator_member_hex)
             .await?;
-
-        if !person_verified {
+        let verified = match ring_index {
+            Some(index) => self.chain_client.ring_root(index).await?.is_some(),
+            None => false,
+        };
+        if !verified {
             tracing::error!(
                 "Personhood verification failed for member: {}",
                 request.creator_member_hex
@@ -80,30 +84,21 @@ impl PollService {
             ));
         }
 
-        let current_time = get_current_timestamp()?;
-
-        let poll = Poll::new(
+        let mut poll = Poll::new(
             0,
             request.creator_member_hex,
             request.poll_data,
             String::new(),
-            current_time,
+            get_current_timestamp(),
         );
-
-        let poll_id = self.repository.create_poll(poll.clone())?;
-
-        let context_bytes = generate_poll_context(poll_id);
-        let context_string = context_to_string(&context_bytes);
-
-        let mut updated_poll = poll;
-        updated_poll.id = poll_id;
-        updated_poll.context = context_string.clone();
-
-        self.repository.update_poll(updated_poll)?;
+        // The context depends on the id, which the repository assigns
+        poll.id = self.repository.create_poll(poll.clone())?;
+        poll.context = hex::encode(generate_poll_context(poll.id));
+        self.repository.update_poll(poll.clone())?;
 
         Ok(CreatePollResponse {
-            poll_id,
-            context: context_string,
+            poll_id: poll.id,
+            context: poll.context,
         })
     }
 
@@ -111,58 +106,32 @@ impl PollService {
         Ok(self.repository.get_poll_by_id(poll_id)?)
     }
 
-    pub async fn get_polls_by_creator(&self, creator_key: &str) -> Result<Vec<Poll>> {
-        Ok(self.repository.get_polls_by_creator(creator_key)?)
-    }
-
     pub async fn get_all_polls(&self) -> Result<Vec<Poll>> {
         Ok(self.repository.get_all_polls()?)
     }
+}
 
-    fn validate_poll_data(&self, poll_data: &PollData) -> Result<()> {
-        const MAX_NAME_LENGTH: usize = 200;
-        const MAX_DESCRIPTION_LENGTH: usize = 2000;
-        const MAX_DURATION_DAYS: i64 = 30;
-        const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+fn validate_poll_data(poll_data: &PollData) -> Result<()> {
+    const MAX_NAME_LENGTH: usize = 200;
+    const MAX_DESCRIPTION_LENGTH: usize = 2000;
+    const MAX_DURATION_SECONDS: i64 = 30 * 24 * 60 * 60;
 
-        if poll_data.name.trim().is_empty() {
-            return Err(PollServiceError::InvalidData(
-                "Name cannot be empty".to_string(),
-            ));
-        }
-
-        if poll_data.name.len() > MAX_NAME_LENGTH {
-            return Err(PollServiceError::InvalidData("Name too long".to_string()));
-        }
-
-        if poll_data.description.len() > MAX_DESCRIPTION_LENGTH {
-            return Err(PollServiceError::InvalidData(
-                "Description too long".to_string(),
-            ));
-        }
-
-        let current_time = get_current_timestamp()?;
-        let duration = poll_data.ends_at - current_time;
-
-        if duration <= 0 {
-            return Err(PollServiceError::InvalidData(
-                "End time must be in the future".to_string(),
-            ));
-        }
-
-        if duration > MAX_DURATION_DAYS * SECONDS_PER_DAY {
-            return Err(PollServiceError::InvalidData(
-                "Poll duration cannot exceed 30 days".to_string(),
-            ));
-        }
-
-        Ok(())
+    let invalid = |msg: &str| Err(PollServiceError::InvalidData(msg.to_string()));
+    if poll_data.name.trim().is_empty() {
+        return invalid("Name cannot be empty");
     }
-
-    fn create_signature_message(&self, request: &CreatePollRequest) -> Result<Vec<u8>> {
-        let message_data = serde_json::to_string(&request.poll_data).map_err(|e| {
-            PollServiceError::InvalidData(format!("JSON serialization failed: {e}"))
-        })?;
-        Ok(message_data.as_bytes().to_vec())
+    if poll_data.name.len() > MAX_NAME_LENGTH {
+        return invalid("Name too long");
     }
+    if poll_data.description.len() > MAX_DESCRIPTION_LENGTH {
+        return invalid("Description too long");
+    }
+    let duration = poll_data.ends_at - get_current_timestamp();
+    if duration <= 0 {
+        return invalid("End time must be in the future");
+    }
+    if duration > MAX_DURATION_SECONDS {
+        return invalid("Poll duration cannot exceed 30 days");
+    }
+    Ok(())
 }

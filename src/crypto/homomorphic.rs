@@ -72,6 +72,12 @@ impl TfheVotingSystem {
     }
 }
 
+impl Default for TfheVotingSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Encrypts a ballot under the server's compact public key (client side), returning the hex to submit.
 pub fn encrypt_vote_with_public_key(
     public_key_hex: &str,
@@ -104,7 +110,11 @@ mod tests {
         let pk = system().public_key_hex().unwrap();
         votes
             .iter()
-            .map(|v| system().decode_ciphertext(&encrypt_vote_with_public_key(&pk, v).unwrap()).unwrap())
+            .map(|v| {
+                system()
+                    .decode_ciphertext(&encrypt_vote_with_public_key(&pk, v).unwrap())
+                    .unwrap()
+            })
             .collect()
     }
 
